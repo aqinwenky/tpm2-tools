@@ -1,5 +1,5 @@
 //**********************************************************************;
-// Copyright (c) 2015, Intel Corporation
+// Copyright (c) 2015-2018, Intel Corporation
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -38,7 +38,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
 #include "files.h"
 #include "log.h"
@@ -47,6 +47,7 @@
 #include "tpm2_errata.h"
 #include "tpm2_options.h"
 #include "tpm2_password_util.h"
+#include "tpm2_session.h"
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
 
@@ -71,16 +72,16 @@ struct tpm_create_ctx {
         UINT16 A : 1;
         UINT16 I : 1;
         UINT16 L : 1;
-        UINT16 o : 1;
+        UINT16 u : 1;
         UINT16 c : 1;
-        UINT16 O : 1;
+        UINT16 r : 1;
     } flags;
 };
 
 #define PUBLIC_AREA_TPMA_OBJECT_DEFAULT_INIT { \
     .publicArea = { \
         .objectAttributes = \
-                  TPMA_OBJECT_DECRYPT|TPMA_OBJECT_SIGN|TPMA_OBJECT_FIXEDTPM \
+                  TPMA_OBJECT_DECRYPT|TPMA_OBJECT_SIGN_ENCRYPT|TPMA_OBJECT_FIXEDTPM \
                   |TPMA_OBJECT_FIXEDPARENT|TPMA_OBJECT_SENSITIVEDATAORIGIN| \
                    TPMA_OBJECT_USERWITHAUTH \
     }, \
@@ -126,12 +127,12 @@ int setup_alg()
         ctx.in_public.publicArea.objectAttributes &= ~TPMA_OBJECT_DECRYPT;
         if (ctx.flags.I) {
             // sealing
-            ctx.in_public.publicArea.objectAttributes &= ~TPMA_OBJECT_SIGN;
+            ctx.in_public.publicArea.objectAttributes &= ~TPMA_OBJECT_SIGN_ENCRYPT;
             ctx.in_public.publicArea.objectAttributes &= ~TPMA_OBJECT_SENSITIVEDATAORIGIN;
             ctx.in_public.publicArea.parameters.keyedHashDetail.scheme.scheme = TPM2_ALG_NULL;
         } else {
             // hmac
-            ctx.in_public.publicArea.objectAttributes |= TPMA_OBJECT_SIGN;
+            ctx.in_public.publicArea.objectAttributes |= TPMA_OBJECT_SIGN_ENCRYPT;
             ctx.in_public.publicArea.parameters.keyedHashDetail.scheme.scheme = TPM2_ALG_HMAC;
             ctx.in_public.publicArea.parameters.keyedHashDetail.scheme.details.hmac.hashAlg = ctx.nameAlg;  //for tpm2_hmac multi alg
         }
@@ -166,11 +167,8 @@ int setup_alg()
 int create(TSS2_SYS_CONTEXT *sapi_context)
 {
     TSS2_RC rval;
-    TPMS_AUTH_RESPONSE sessionDataOut;
-    TSS2_SYS_CMD_AUTHS sessionsData;
-    TSS2_SYS_RSP_AUTHS sessionsDataOut;
-    TPMS_AUTH_COMMAND *sessionDataArray[1];
-    TPMS_AUTH_RESPONSE *sessionDataOutArray[1];
+    TSS2L_SYS_AUTH_COMMAND sessionsData;
+    TSS2L_SYS_AUTH_RESPONSE sessionsDataOut;
 
     TPM2B_DATA              outsideInfo = TPM2B_EMPTY_INIT;
     TPML_PCR_SELECTION      creationPCR;
@@ -181,16 +179,8 @@ int create(TSS2_SYS_CONTEXT *sapi_context)
     TPM2B_DIGEST            creationHash = TPM2B_TYPE_INIT(TPM2B_DIGEST, buffer);
     TPMT_TK_CREATION        creationTicket = TPMT_TK_CREATION_EMPTY_INIT;
 
-    sessionDataArray[0] = &ctx.session_data;
-    sessionDataOutArray[0] = &sessionDataOut;
-
-    sessionsDataOut.rspAuths = &sessionDataOutArray[0];
-    sessionsData.cmdAuths = &sessionDataArray[0];
-
-    sessionsDataOut.rspAuthsCount = 1;
-
-    sessionsData.cmdAuthsCount = 1;
-    sessionsData.cmdAuths[0] = &ctx.session_data;
+    sessionsData.count = 1;
+    sessionsData.auths[0] = ctx.session_data;
 
     ctx.in_sensitive.size = ctx.in_sensitive.sensitive.userAuth.size + 2;
 
@@ -203,21 +193,21 @@ int create(TSS2_SYS_CONTEXT *sapi_context)
                            &ctx.in_public, &outsideInfo, &creationPCR, &outPrivate,&outPublic,
                            &creationData, &creationHash, &creationTicket, &sessionsDataOut));
     if(rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("Create Object Failed! ErrorCode: 0x%0x",rval);
+        LOG_PERR(Tss2_Sys_Create, rval);
         return -2;
     }
 
     tpm2_util_public_to_yaml(&outPublic);
 
-    if (ctx.flags.o) {
+    if (ctx.flags.u) {
         bool res = files_save_public(&outPublic, ctx.opu_path);
         if(!res) {
             return -3;
         }
     }
 
-    if (ctx.flags.O) {
-        bool res = files_save_bytes_to_file(ctx.opr_path, outPrivate.buffer, outPrivate.size);
+    if (ctx.flags.r) {
+        bool res = files_save_private(&outPrivate, ctx.opr_path);
         if (!res) {
             return -4;
         }
@@ -292,26 +282,28 @@ static bool on_option(char key, char *value) {
         }
         ctx.flags.L = 1;
         break;
-    case 'S':
-        if (!tpm2_util_string_to_uint32(value, &ctx.session_data.sessionHandle)) {
-            LOG_ERR("Could not convert session handle to number, got: \"%s\"",
-                    value);
+    case 'S': {
+        tpm2_session *s = tpm2_session_restore(value);
+        if (!s) {
             return false;
         }
-        break;
+
+        ctx.session_data.sessionHandle = tpm2_session_get_handle(s);
+        tpm2_session_free(&s);
+    } break;
     case 'u':
         ctx.opu_path = value;
         if(files_does_file_exist(ctx.opu_path) != 0) {
             return false;
         }
-        ctx.flags.o = 1;
+        ctx.flags.u = 1;
         break;
     case 'r':
         ctx.opr_path = value;
         if(files_does_file_exist(ctx.opr_path) != 0) {
             return false;
         }
-        ctx.flags.O = 1;
+        ctx.flags.r = 1;
         break;
     case 'c':
         ctx.context_parent_path = value;
@@ -328,25 +320,25 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     static struct option topts[] = {
-      {"parent",1,NULL,'H'},
-      {"pwdp",1,NULL,'P'},
-      {"pwdk",1,NULL,'K'},
-      {"halg",1,NULL,'g'},
-      {"kalg",1,NULL,'G'},
-      {"object-attributes",1,NULL,'A'},
-      {"in-file",1,NULL,'I'},
-      {"policy-file",1,NULL,'L'},
-      {"pubfile",1,NULL,'u'},
-      {"privfile",1,NULL,'r'},
-      {"context-parent",1,NULL,'c'},
-      {"input-session-handle",1,NULL,'S'},
-      {0,0,0,0}
+      { "parent",               required_argument, NULL, 'H' },
+      { "pwdp",                 required_argument, NULL, 'P' },
+      { "pwdk",                 required_argument, NULL, 'K' },
+      { "halg",                 required_argument, NULL, 'g' },
+      { "kalg",                 required_argument, NULL, 'G' },
+      { "object-attributes",    required_argument, NULL, 'A' },
+      { "in-file",              required_argument, NULL, 'I' },
+      { "policy-file",          required_argument, NULL, 'L' },
+      { "pubfile",              required_argument, NULL, 'u' },
+      { "privfile",             required_argument, NULL, 'r' },
+      { "context-parent",       required_argument, NULL, 'c' },
+      { "session",              required_argument, NULL, 'S' },
     };
 
     setbuf(stdout, NULL);
     setvbuf (stdout, NULL, _IONBF, BUFSIZ);
 
-    *opts = tpm2_options_new("H:P:K:g:G:A:I:L:u:r:c:S:", ARRAY_LEN(topts), topts, on_option, NULL);
+    *opts = tpm2_options_new("H:P:K:g:G:A:I:L:u:r:c:S:", ARRAY_LEN(topts), topts,
+                             on_option, NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }
@@ -386,7 +378,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     } else if(flagCnt == 3 && (ctx.flags.H == 1 || ctx.flags.c == 1) &&
               ctx.flags.g == 1 && ctx.flags.G == 1) {
         if(ctx.flags.c)
-            returnVal = files_load_tpm_context_from_file(sapi_context,
+            returnVal = files_load_tpm_context_from_path(sapi_context,
                                                          &ctx.parent_handle, ctx.context_parent_path) != true;
         if(returnVal == 0)
             returnVal = create(sapi_context);

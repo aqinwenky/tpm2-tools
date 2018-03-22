@@ -35,13 +35,13 @@ server.
   * **-H**, **--handle**=_HANDLE_:
     specifies the handle used to make EK  persistent (hex).
 
-  * **-g**, **--alg**=_ALGORITHM_:
+  * **-g**, **--algorithm**=_ALGORITHM_:
     specifies the algorithm type of EK.
     See section "Supported Public Object Algorithms" for a list of supported
     object algorithms. See section "Algorithm Specifiers" on how to specify
     an algorithm argument.
 
-  * **-f**, **--output**=_FILE_:
+  * **-f**, **--out-file**=_FILE_:
     Specifies the file used to save the public portion of EK.
 
   * **-N**, **--non-persistent**:
@@ -60,8 +60,9 @@ server.
     specifies to attempt connecting with the  TPM manufacturer provisioning server
     with SSL_NO_VERIFY option.
 
-  * **-S**, **--input-session-handle**=_SESSION\_HANDLE_:
-    Optional Input session handle from a policy session for authorization.
+  * **-S**, **--session**=_SESSION\_FILE_:
+
+    Optional, A session file from **tpm2_startauthsession**(1)'s **-S** option.
 
 
 [common options](common/options.md)
@@ -91,11 +92,4 @@ tpm2_getmanufec -e 1a1b1c -o 1a1b1c -P 123abc -H 0x81010001-g 0x01 -O -N -U -E E
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
-
+[footer](common/footer.md)

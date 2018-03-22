@@ -31,9 +31,11 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stdbool.h>
-#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "log.h"
+#include "files.h"
 #include "tpm2_alg_util.h"
 #include "tpm2_attr_util.h"
 #include "tpm2_tool.h"
@@ -132,64 +134,47 @@ int tpm2_util_hex_to_byte_structure(const char *inStr, UINT16 *byteLength,
     return 0;
 }
 
-void tpm2_util_hexdump(BYTE *data, size_t len, bool plain) {
+void tpm2_util_hexdump(const BYTE *data, size_t len) {
 
     if (!output_enabled) {
         return;
     }
 
-    if (plain) {
-        size_t i;
-        for (i=0; i < len; i++) {
-            printf("%02x", data[i]);
-        }
-        return;
-    }
-
     size_t i;
-    size_t j;
-    for (i = 0; i < len; i += 16) {
-        printf("%06zx: ", i);
-
-        for (j = 0; j < 16; j++) {
-            if (i + j < len) {
-                printf("%02x ", data[i + j]);
-            } else {
-                printf("   ");
-            }
-        }
-
-        printf(" ");
-
-        for (j = 0; j < 16; j++) {
-            if (i + j < len) {
-                printf("%c", isprint(data[i + j]) ? data[i + j] : '.');
-            }
-        }
-        printf("\n");
+    for (i=0; i < len; i++) {
+        printf("%02x", data[i]);
     }
 }
 
-/* TODO OPTIMIZE ME */
-UINT16 tpm2_util_copy_tpm2b(TPM2B *dest, TPM2B *src) {
-    int i;
-    UINT16 rval = 0;
-
-    if (dest != 0) {
-        if (src == 0) {
-            dest->size = 0;
-            rval = 0;
-        } else {
-            dest->size = src->size;
-            for (i = 0; i < src->size; i++)
-                dest->buffer[i] = src->buffer[i];
-            rval = (sizeof(UINT16) + src->size);
-        }
-    } else {
-        rval = 0;
+bool tpm2_util_hexdump_file(FILE *fd, size_t len) {
+    BYTE* buff = (BYTE*)malloc(len);
+    if (!buff) {
+        LOG_ERR("malloc() failed");
+        return false;
     }
 
-    return rval;
+    bool res = files_read_bytes(fd, buff, len);
+    if (!res) {
+        LOG_ERR("Failed to read file");
+        free(buff);
+        return false;
+    }
+
+    tpm2_util_hexdump(buff, len);
+
+    free(buff);
+    return true;
+}
+
+bool tpm2_util_print_tpm2b_file(FILE *fd)
+{
+    UINT16 len;
+    bool res = files_read_16(fd, &len);
+    if(!res) {
+        LOG_ERR("File read failed");
+        return false;
+    }
+    return tpm2_util_hexdump_file(fd, len);
 }
 
 bool tpm2_util_is_big_endian(void) {
@@ -315,16 +300,28 @@ static void tpm2_util_public_to_keydata(TPM2B_PUBLIC *public, tpm2_util_keydata 
     return;
 }
 
+void print_yaml_indent(size_t indent_count) {
+    while (indent_count--) {
+        tpm2_tool_output("  ");
+    }
+}
+
+void tpm2_util_tpma_object_to_yaml(TPMA_OBJECT obj) {
+
+    char *attrs = tpm2_attr_util_obj_attrtostr(obj);
+    tpm2_tool_output("attributes:\n");
+    tpm2_tool_output("  value: %s\n", attrs);
+    tpm2_tool_output("  raw: 0x%x\n", obj);
+    free(attrs);
+}
+
 void tpm2_util_public_to_yaml(TPM2B_PUBLIC *public) {
 
     tpm2_tool_output("algorithm:\n");
     tpm2_tool_output("  value: %s\n", tpm2_alg_util_algtostr(public->publicArea.nameAlg));
     tpm2_tool_output("  raw: 0x%x\n", public->publicArea.nameAlg);
 
-    char *attrs = tpm2_attr_util_obj_attrtostr(public->publicArea.objectAttributes);
-    tpm2_tool_output("attributes:\n");
-    tpm2_tool_output("  value: %s\n", attrs);
-    tpm2_tool_output("  raw: 0x%x\n", public->publicArea.objectAttributes);
+    tpm2_util_tpma_object_to_yaml(public->publicArea.objectAttributes);
 
     tpm2_tool_output("type: \n");
     tpm2_tool_output("  value: %s\n", tpm2_alg_util_algtostr(public->publicArea.type));
@@ -344,9 +341,7 @@ void tpm2_util_public_to_yaml(TPM2B_PUBLIC *public) {
     if (public->publicArea.authPolicy.size) {
         tpm2_tool_output("authorization policy: ");
         tpm2_util_hexdump(public->publicArea.authPolicy.buffer,
-                public->publicArea.authPolicy.size, true);
+                public->publicArea.authPolicy.size);
         tpm2_tool_output("\n");
     }
-
-    free(attrs);
 }

@@ -42,9 +42,18 @@ data and validation shall indicate that hashed data did not start with
     algorithms.
 
 
-  * **-m**, **--msg**=_MSG\_FILE_:
+  * **-m**, **--message**=_MSG\_FILE_:
 
     The message file, containing the content to be  digested.
+
+  * **-D**, **--digest**=_DIGEST\_FILE_:
+
+    The digest file that shall be computed using the correct hash
+    algorithm. When this option is specified, a warning is generated and
+    **both the message file (-m) and the validation ticket (-t) are
+    ignored**.
+    You cannot use this option to sign a digest against a restricted
+    signing key.
 
   * **-t**, **--ticket**=_TICKET\_FILE_:
 
@@ -58,9 +67,9 @@ data and validation shall indicate that hashed data did not start with
 
     Format selection for the signature output file. See section "Signature Format Specifiers".
 
-  * **-S**, **--input-session-handle**=_SESSION\_HANDLE_:
+  * **-S**, **--session**=_SESSION\_FILE_:
 
-    Optional Input session handle from a policy session for authorization.
+    Optional, A session file from **tpm2_startauthsession**(1)'s **-S** option.
 
 [common options](common/options.md)
 
@@ -86,10 +95,4 @@ tpm2_sign -c key.context -P abc123 -g sha256 -m <filePath> -s <filePath> -t <fil
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
+[footer](common/footer.md)

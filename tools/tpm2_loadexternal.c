@@ -35,7 +35,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
 #include "tpm2_options.h"
 #include "files.h"
@@ -47,7 +47,7 @@ typedef struct tpm_loadexternal_ctx tpm_loadexternal_ctx;
 struct tpm_loadexternal_ctx {
     char *context_file_path;
     TPMI_RH_HIERARCHY hierarchy_value;
-    TPM2_HANDLE rsa2048_handle;
+    TPM2_HANDLE handle;
     TPM2B_PUBLIC public_key;
     TPM2B_SENSITIVE private_key;
     bool save_to_context_file;
@@ -92,20 +92,16 @@ static bool get_hierarchy_value(const char *argument_opt,
 
 static bool load_external(TSS2_SYS_CONTEXT *sapi_context) {
 
-    TSS2_SYS_RSP_AUTHS sessionsDataOut;
-    TPMS_AUTH_RESPONSE *sessionDataOutArray[1];
+    TSS2L_SYS_AUTH_RESPONSE sessionsDataOut;
 
     TPM2B_NAME nameExt = TPM2B_TYPE_INIT(TPM2B_NAME, name);
 
-    sessionsDataOut.rspAuths = &sessionDataOutArray[0];
-    sessionsDataOut.rspAuthsCount = 1;
-
     TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_LoadExternal(sapi_context, 0,
             ctx.private_key.size ? &ctx.private_key : NULL, &ctx.public_key,
-            ctx.hierarchy_value, &ctx.rsa2048_handle, &nameExt,
+            ctx.hierarchy_value, &ctx.handle, &nameExt,
             &sessionsDataOut));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("LoadExternal Failed ! ErrorCode: 0x%0x", rval);
+        LOG_PERR(Tss2_Sys_LoadExternal, rval);
         return false;
     }
 
@@ -125,7 +121,7 @@ static bool on_option(char key, char *value) {
         ctx.flags.H = 1;
     break;
     case 'u':
-        if(!files_load_public(optarg, &ctx.public_key)) {
+        if(!files_load_public(value, &ctx.public_key)) {
             return false;;
         }
         ctx.flags.u = 1;
@@ -154,7 +150,8 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
       { "context",  required_argument, NULL, 'C'},
     };
 
-    *opts = tpm2_options_new("H:u:r:C:", ARRAY_LEN(topts), topts, on_option, NULL);
+    *opts = tpm2_options_new("H:u:r:C:", ARRAY_LEN(topts), topts, on_option,
+                             NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }
@@ -165,7 +162,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
     if (!(ctx.flags.H && ctx.flags.u)) {
         LOG_ERR("Expected H and u options");
-        return false;
+        return 1;
     }
 
     bool result = load_external(sapi_context);
@@ -173,8 +170,10 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
         return 1;
     }
 
+    tpm2_tool_output("0x%X\n", ctx.handle);
+
     if(ctx.save_to_context_file) {
-            return files_save_tpm_context_to_file(sapi_context, ctx.rsa2048_handle,
+            return files_save_tpm_context_to_path(sapi_context, ctx.handle,
                     ctx.context_file_path) != true;
     }
 

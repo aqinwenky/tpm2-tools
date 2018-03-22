@@ -1,5 +1,5 @@
 //**********************************************************************;
-// Copyright (c) 2015, Intel Corporation
+// Copyright (c) 2015-2018, Intel Corporation
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -29,214 +29,129 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //**********************************************************************;
 
+#include <ctype.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdbool.h>
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <limits.h>
-#include <ctype.h>
 
-#include <sapi/tpm20.h>
-#include <tcti/tcti_socket.h>
+#include <tss2/tss2_sys.h>
 
 #include "files.h"
 #include "log.h"
 #include "tpm2_alg_util.h"
 #include "tpm2_attr_util.h"
+#include "tpm2_hierarchy.h"
 #include "tpm2_options.h"
 #include "tpm2_password_util.h"
+#include "tpm2_session.h"
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
 
 typedef struct tpm_createprimary_ctx tpm_createprimary_ctx;
 struct tpm_createprimary_ctx {
     TPMS_AUTH_COMMAND session_data;
-    TPM2B_SENSITIVE_CREATE inSensitive;
-    TPM2B_PUBLIC in_public;
-    TPMI_ALG_HASH nameAlg;
-    TPMI_RH_HIERARCHY hierarchy;
+    tpm2_hierearchy_pdata objdata;
     char *context_file;
-    TPM2_HANDLE handle2048rsa;
     struct {
-        UINT8 A : 1;
-        UINT8 g : 1;
-        UINT8 G : 1;
-        UINT8 C : 1;
+        UINT8 H :1;
+        UINT8 g :1;
+        UINT8 G :1;
     } flags;
 };
 
-#define PUBLIC_AREA_TPMA_OBJECT_DEFAULT_INIT { \
-    .publicArea = { \
-        .type = TPM2_ALG_RSA, \
-        .objectAttributes = \
-            TPMA_OBJECT_RESTRICTED|TPMA_OBJECT_DECRYPT \
-            |TPMA_OBJECT_FIXEDTPM|TPMA_OBJECT_FIXEDPARENT \
-            |TPMA_OBJECT_SENSITIVEDATAORIGIN|TPMA_OBJECT_USERWITHAUTH \
-    }, \
-}
-
 static tpm_createprimary_ctx ctx = {
-    .session_data = {
-        .sessionHandle = TPM2_RS_PW,
-        .nonce = TPM2B_EMPTY_INIT,
-        .hmac = TPM2B_EMPTY_INIT,
-        .sessionAttributes = 0,
-    },
-    .inSensitive = TPM2B_SENSITIVE_CREATE_EMPTY_INIT,
-    .in_public = PUBLIC_AREA_TPMA_OBJECT_DEFAULT_INIT,
-    .nameAlg = TPM2_ALG_SHA1,
-    .hierarchy = TPM2_RH_NULL,
+    .session_data = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
+    .objdata = TPM2_HIERARCHY_DATA_INIT
 };
 
-int setup_alg(void) {
 
-    switch(ctx.nameAlg) {
+static bool set_name_alg(TPMI_ALG_HASH halg, TPM2B_PUBLIC *public) {
+
+    switch(halg) {
     case TPM2_ALG_SHA1:
     case TPM2_ALG_SHA256:
     case TPM2_ALG_SHA384:
     case TPM2_ALG_SHA512:
     case TPM2_ALG_SM3_256:
     case TPM2_ALG_NULL:
-        ctx.in_public.publicArea.nameAlg = ctx.nameAlg;
-        break;
-    default:
-        LOG_ERR("nameAlg algorithm: 0x%0x not support !", ctx.nameAlg);
-        return -1;
+        public->publicArea.nameAlg = halg;
+        return true;
     }
 
-    switch(ctx.in_public.publicArea.type) {
-    case TPM2_ALG_RSA:
-        ctx.in_public.publicArea.parameters.rsaDetail.symmetric.algorithm = TPM2_ALG_AES;
-        ctx.in_public.publicArea.parameters.rsaDetail.symmetric.keyBits.aes = 128;
-        ctx.in_public.publicArea.parameters.rsaDetail.symmetric.mode.aes = TPM2_ALG_CFB;
-        ctx.in_public.publicArea.parameters.rsaDetail.scheme.scheme = TPM2_ALG_NULL;
-        ctx.in_public.publicArea.parameters.rsaDetail.keyBits = 2048;
-        ctx.in_public.publicArea.parameters.rsaDetail.exponent = 0;
-        ctx.in_public.publicArea.unique.rsa.size = 0;
-        break;
+    LOG_ERR("name algorithm \"%s\" not supported!",
+            tpm2_alg_util_algtostr(halg));
 
-    case TPM2_ALG_KEYEDHASH:
-        ctx.in_public.publicArea.parameters.keyedHashDetail.scheme.scheme = TPM2_ALG_XOR;
-        ctx.in_public.publicArea.parameters.keyedHashDetail.scheme.details.exclusiveOr.hashAlg = TPM2_ALG_SHA256;
-        ctx.in_public.publicArea.parameters.keyedHashDetail.scheme.details.exclusiveOr.kdf = TPM2_ALG_KDF1_SP800_108;
-        ctx.in_public.publicArea.unique.keyedHash.size = 0;
-        break;
-
-    case TPM2_ALG_ECC:
-        ctx.in_public.publicArea.parameters.eccDetail.symmetric.algorithm = TPM2_ALG_AES;
-        ctx.in_public.publicArea.parameters.eccDetail.symmetric.keyBits.aes = 128;
-        ctx.in_public.publicArea.parameters.eccDetail.symmetric.mode.sym = TPM2_ALG_CFB;
-        ctx.in_public.publicArea.parameters.eccDetail.scheme.scheme = TPM2_ALG_NULL;
-        ctx.in_public.publicArea.parameters.eccDetail.curveID = TPM2_ECC_NIST_P256;
-        ctx.in_public.publicArea.parameters.eccDetail.kdf.scheme = TPM2_ALG_NULL;
-        ctx.in_public.publicArea.unique.ecc.x.size = 0;
-        ctx.in_public.publicArea.unique.ecc.y.size = 0;
-        break;
-
-    case TPM2_ALG_SYMCIPHER:
-        ctx.in_public.publicArea.parameters.symDetail.sym.algorithm = TPM2_ALG_AES;
-        ctx.in_public.publicArea.parameters.symDetail.sym.keyBits.sym = 128;
-        ctx.in_public.publicArea.parameters.symDetail.sym.mode.sym = TPM2_ALG_CFB;
-        ctx.in_public.publicArea.unique.sym.size = 0;
-        break;
-
-    default:
-        LOG_ERR("type algrithm: 0x%0x not support !", ctx.in_public.publicArea.type);
-        return -2;
-    }
-    return 0;
+    return false;
 }
 
-int create_primary(TSS2_SYS_CONTEXT *sapi_context) {
-    UINT32 rval;
-    TPMS_AUTH_RESPONSE sessionDataOut;
-    TSS2_SYS_CMD_AUTHS sessionsData;
-    TSS2_SYS_RSP_AUTHS sessionsDataOut;
-    TPMS_AUTH_COMMAND *sessionDataArray[1];
-    TPMS_AUTH_RESPONSE *sessionDataOutArray[1];
+static bool set_alg(TPMI_ALG_PUBLIC type, TPM2B_PUBLIC *public) {
 
-    TPM2B_DATA              outsideInfo = TPM2B_EMPTY_INIT;
-    TPML_PCR_SELECTION      creationPCR;
-    TPM2B_NAME              name = TPM2B_TYPE_INIT(TPM2B_NAME, name);
-    TPM2B_PUBLIC            outPublic = TPM2B_EMPTY_INIT;
-    TPM2B_CREATION_DATA     creationData = TPM2B_EMPTY_INIT;
-    TPM2B_DIGEST            creationHash = TPM2B_TYPE_INIT(TPM2B_DIGEST, buffer);
-    TPMT_TK_CREATION        creationTicket = TPMT_TK_CREATION_EMPTY_INIT;
 
-    sessionDataArray[0] = &ctx.session_data;
-    sessionDataOutArray[0] = &sessionDataOut;
-
-    sessionsDataOut.rspAuths = &sessionDataOutArray[0];
-    sessionsData.cmdAuths = &sessionDataArray[0];
-
-    sessionsData.cmdAuthsCount = 1;
-    sessionsDataOut.rspAuthsCount = 1;
-
-    ctx.inSensitive.size = ctx.inSensitive.sensitive.userAuth.size +
-        sizeof(ctx.inSensitive.size);
-
-    if(setup_alg())
-        return -1;
-    tpm2_tool_output("ObjectAttribute: 0x%08X\n", ctx.in_public.publicArea.objectAttributes);
-
-    creationPCR.count = 0;
-
-    rval = TSS2_RETRY_EXP(Tss2_Sys_CreatePrimary(sapi_context, ctx.hierarchy, &sessionsData,
-                                  &ctx.inSensitive, &ctx.in_public, &outsideInfo, &creationPCR,
-                                  &ctx.handle2048rsa, &outPublic, &creationData, &creationHash,
-                                  &creationTicket, &name, &sessionsDataOut));
-    if(rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("\nCreatePrimary Failed ! ErrorCode: 0x%0x\n", rval);
-        return -2;
-    }
-
-    tpm2_tool_output("\nCreatePrimary Succeed ! Handle: 0x%8.8x\n\n", ctx.handle2048rsa);
-
-    return 0;
-}
-
-static bool hierarchy_value_from_string(const char *value, TPMI_RH_HIERARCHY *hierarchy) {
-
-    switch (value[0]) {
-    case 'e':
-        *hierarchy = TPM2_RH_ENDORSEMENT;
-        break;
-    case 'n':
-        *hierarchy = TPM2_RH_NULL;
-        break;
-    case 'o':
-        *hierarchy = TPM2_RH_OWNER;
-        break;
-    case 'p':
-        *hierarchy = TPM2_RH_PLATFORM;
-        break;
+    switch(type) {
+    case TPM2_ALG_RSA: {
+        TPMS_RSA_PARMS *r = &public->publicArea.parameters.rsaDetail;
+       r->symmetric.algorithm = TPM2_ALG_AES;
+       r->symmetric.keyBits.aes = 128;
+       r->symmetric.mode.aes = TPM2_ALG_CFB;
+       r->scheme.scheme = TPM2_ALG_NULL;
+       r->keyBits = 2048;
+       r->exponent = 0;
+       public->publicArea.unique.rsa.size = 0;
+    } break;
+    case TPM2_ALG_KEYEDHASH: {
+        TPMT_KEYEDHASH_SCHEME *s = &public->publicArea.parameters.keyedHashDetail.scheme;
+       s->scheme = TPM2_ALG_XOR;
+       s->details.exclusiveOr.hashAlg = TPM2_ALG_SHA256;
+       s->details.exclusiveOr.kdf = TPM2_ALG_KDF1_SP800_108;
+       public->publicArea.unique.keyedHash.size = 0;
+    } break;
+    case TPM2_ALG_ECC: {
+        TPMS_ECC_PARMS *e = &public->publicArea.parameters.eccDetail;
+       e->symmetric.algorithm = TPM2_ALG_AES;
+       e->symmetric.keyBits.aes = 128;
+       e->symmetric.mode.sym = TPM2_ALG_CFB;
+       e->scheme.scheme = TPM2_ALG_NULL;
+       e->curveID = TPM2_ECC_NIST_P256;
+       e->kdf.scheme = TPM2_ALG_NULL;
+       public->publicArea.unique.ecc.x.size = 0;
+       public->publicArea.unique.ecc.y.size = 0;
+    } break;
+    case TPM2_ALG_SYMCIPHER: {
+        TPMS_SYMCIPHER_PARMS *s = &public->publicArea.parameters.symDetail;
+       s->sym.algorithm = TPM2_ALG_AES;
+       s->sym.keyBits.sym = 128;
+       s->sym.mode.sym = TPM2_ALG_CFB;
+       public->publicArea.unique.sym.size = 0;
+    } break;
     default:
+        LOG_ERR("type algorithm \"%s\" not supported!",
+                tpm2_alg_util_algtostr(public->publicArea.type));
+
         return false;
     }
 
-    bool result = value[1] == '\0';
+    public->publicArea.type = type;
 
-    if (!result) {
-        LOG_ERR("Incorrect hierarchy value, got: \"%s\", expected o|p|e|n",
-            value);
-    }
-
-    return result;
+    return true;
 }
+
+
 
 static bool on_option(char key, char *value) {
 
     bool res;
 
-    switch(key) {
+    switch (key) {
     case 'H':
-        res = hierarchy_value_from_string(value, &ctx.hierarchy);
+        res = tpm2_hierarchy_from_optarg(value, &ctx.objdata.in.hierarchy,
+                TPM2_HIERARCHY_FLAGS_ALL);
         if (!res) {
             return false;
         }
-        ctx.flags.A = 1;
+        ctx.flags.H = 1;
         break;
     case 'P':
         res = tpm2_password_util_from_optarg(value, &ctx.session_data.hmac);
@@ -246,57 +161,70 @@ static bool on_option(char key, char *value) {
         }
         break;
     case 'K':
-        res = tpm2_password_util_from_optarg(value, &ctx.inSensitive.sensitive.userAuth);
+        res = tpm2_password_util_from_optarg(value,
+                &ctx.objdata.in.sensitive.sensitive.userAuth);
         if (!res) {
             LOG_ERR("Invalid new key password, got\"%s\"", value);
             return false;
         }
         break;
-    case 'g':
-        ctx.nameAlg = tpm2_alg_util_from_optarg(value);
-        if(ctx.nameAlg == TPM2_ALG_ERROR) {
+    case 'g': {
+        TPMI_ALG_HASH halg = tpm2_alg_util_from_optarg(value);
+        if (halg == TPM2_ALG_ERROR) {
             LOG_ERR("Invalid hash algorithm, got\"%s\"", value);
             return false;
         }
+
+        res = set_name_alg(halg, &ctx.objdata.in.public);
+        if (!res) {
+            return false;
+        }
         ctx.flags.g = 1;
-        break;
-    case 'G':
-        ctx.in_public.publicArea.type = tpm2_alg_util_from_optarg(value);
-        if(ctx.in_public.publicArea.type == TPM2_ALG_ERROR) {
+    }   break;
+    case 'G': {
+        TPMI_ALG_PUBLIC type = tpm2_alg_util_from_optarg(value);
+        if (type == TPM2_ALG_ERROR) {
             LOG_ERR("Invalid key algorithm, got\"%s\"", value);
             return false;
         }
+
+        res = set_alg(type, &ctx.objdata.in.public);
+        if (!res) {
+            return false;
+        }
         ctx.flags.G = 1;
-        break;
+    }   break;
     case 'C':
         ctx.context_file = value;
-        if(ctx.context_file == NULL || ctx.context_file[0] == '\0') {
-            return false;
-        }
-        ctx.flags.C = 1;
-        break;
-    case 'L':
-        ctx.in_public.publicArea.authPolicy.size = BUFFER_SIZE(TPM2B_DIGEST, buffer);
-        if(!files_load_bytes_from_path(value, ctx.in_public.publicArea.authPolicy.buffer,
-                                       &ctx.in_public.publicArea.authPolicy.size)) {
+        if (ctx.context_file == NULL || ctx.context_file[0] == '\0') {
             return false;
         }
         break;
+    case 'L': {
+        TPM2B_DIGEST *auth_policy = &ctx.objdata.in.public.publicArea.authPolicy;
+        auth_policy->size = BUFFER_SIZE(TPM2B_DIGEST, buffer);
+        if (!files_load_bytes_from_path(value,
+                auth_policy->buffer, &auth_policy->size)) {
+            return false;
+        }
+    }   break;
     case 'A': {
         bool res = tpm2_attr_util_obj_from_optarg(value,
-                &ctx.in_public.publicArea.objectAttributes);
-        if(!res) {
+                &ctx.objdata.in.public.publicArea.objectAttributes);
+        if (!res) {
             LOG_ERR("Invalid object attribute, got\"%s\"", value);
             return false;
         }
-    } break;
-    case 'S':
-        if (!tpm2_util_string_to_uint32(value, &ctx.session_data.sessionHandle)) {
-            LOG_ERR("Could not convert session handle to number, got: \"%s\"",
-                    value);
+    }   break;
+    case 'S': {
+        tpm2_session *s = tpm2_session_restore(value);
+        if (!s) {
             return false;
         }
-        break;
+
+        ctx.session_data.sessionHandle = tpm2_session_get_handle(s);
+        tpm2_session_free(&s);
+    }   break;
     }
 
     return true;
@@ -305,45 +233,49 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     const struct option topts[] = {
-      {"hierarchy", required_argument, NULL, 'H'},
-      {"pwdp",1,NULL,'P'},
-      {"pwdk",1,NULL,'K'},
-      {"halg",1,NULL,'g'},
-      {"kalg",1,NULL,'G'},
-      {"context",1,NULL,'C'},
-      {"policy-file",1,NULL,'L'},
-      {"object-attributes", required_argument, NULL, 'A'},
-      {"input-session-handle",1,NULL,'S'},
-      {0,0,0,0}
+        { "hierarchy",            required_argument, NULL, 'H' },
+        { "pwdp",                 required_argument, NULL, 'P' },
+        { "pwdk",                 required_argument, NULL, 'K' },
+        { "halg",                 required_argument, NULL, 'g' },
+        { "kalg",                 required_argument, NULL, 'G' },
+        { "context",              required_argument, NULL, 'C' },
+        { "policy-file",          required_argument, NULL, 'L' },
+        { "object-attributes",    required_argument, NULL, 'A' },
+        { "input-session-handle", required_argument, NULL, 'S' },
     };
 
-    setbuf(stdout, NULL);
-    setvbuf (stdout, NULL, _IONBF, BUFSIZ);
-
-    *opts = tpm2_options_new("A:P:K:g:G:C:L:S:H:", ARRAY_LEN(topts), topts, on_option, NULL);
+    *opts = tpm2_options_new("A:P:K:g:G:C:L:S:H:", ARRAY_LEN(topts), topts,
+            on_option, NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }
 
+static inline bool valid_ctx(void) {
+    return (ctx.flags.H && ctx.flags.g && ctx.flags.G);
+}
+
 int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
-
     UNUSED(flags);
-    int returnVal = 0;
 
-    if(ctx.flags.A == 1 && ctx.flags.g == 1 && ctx.flags.G == 1) {
-        returnVal = create_primary(sapi_context);
-
-        if (returnVal == 0 && ctx.flags.C) {
-            returnVal = files_save_tpm_context_to_file(sapi_context, ctx.handle2048rsa,
-                                                       ctx.context_file) != true;
-        }
-
-        if(returnVal) {
-            return 1;
-        }
-    } else {
+    if (!valid_ctx()) {
         return 1;
     }
 
-    return 0;
+    bool result = tpm2_hierarrchy_create_primary(sapi_context, &ctx.session_data, &ctx.objdata);
+    if (!result) {
+        return 1;
+    }
+
+    tpm2_util_tpma_object_to_yaml(ctx.objdata.in.public.publicArea.objectAttributes);
+    tpm2_tool_output("handle: 0x%X\n", ctx.objdata.out.handle);
+
+    if (!ctx.context_file) {
+        return 0;
+    }
+
+    result = files_save_tpm_context_to_path(sapi_context, ctx.objdata.out.handle,
+            ctx.context_file);
+
+    /* 0 on success, 1 otherwise */
+    return !result;
 }

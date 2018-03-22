@@ -27,6 +27,7 @@ will create and load a Primary Object. The sensitive area is not returned.
       * **p** for **TPM_RH_PLATFORM**
       * **e** for **TPM_RH_ENDORSEMENT**
       * **n** for **TPM_RH_NULL**
+      * **`<num>`** where a raw number can be used.
 
   * **-P**, **--pwdp**=_PARENT\_KEY\_PASSWORD_:
     Optional authorization string if authorization is required to create object under the specified hierarchy.
@@ -59,8 +60,9 @@ will create and load a Primary Object. The sensitive area is not returned.
 
     `TPMA_OBJECT_RESTRICTED|TPMA_OBJECT_DECRYPT|TPMA_OBJECT_FIXEDTPM|TPMA_OBJECT_FIXEDPARENT|TPMA_OBJECT_SENSITIVEDATAORIGIN|TPMA_OBJECT_USERWITHAUTH`
 
-  * **-S**, **--input-session-handle**=_SESSION\_HANDLE_:
-    Optional Input session handle from a policy session for authorization.
+  * **-S**, **--session**=_SESSION\_FILE_:
+
+    Optional, A session file from **tpm2_startauthsession**(1)'s **-S** option.
 
 [common options](common/options.md)
 
@@ -86,11 +88,4 @@ tpm2_createprimary -H o -g sha256 -G ecc -C context.out
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
-
+[footer](common/footer.md)

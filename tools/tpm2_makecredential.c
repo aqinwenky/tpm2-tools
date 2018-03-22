@@ -36,7 +36,7 @@
 #include <limits.h>
 #include <ctype.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
 #include "files.h"
 #include "tpm2_options.h"
@@ -117,9 +117,7 @@ out:
 
 static bool make_credential_and_save(TSS2_SYS_CONTEXT *sapi_context)
 {
-    TPMS_AUTH_RESPONSE session_data_out;
-    TSS2_SYS_RSP_AUTHS sessions_data_out;
-    TPMS_AUTH_RESPONSE *session_data_out_array[1];
+    TSS2L_SYS_AUTH_RESPONSE sessions_data_out;
 
     TPM2B_NAME name_ext = TPM2B_TYPE_INIT(TPM2B_NAME, name);
 
@@ -127,14 +125,10 @@ static bool make_credential_and_save(TSS2_SYS_CONTEXT *sapi_context)
 
     TPM2B_ENCRYPTED_SECRET secret = TPM2B_TYPE_INIT(TPM2B_ENCRYPTED_SECRET, secret);
 
-    session_data_out_array[0] = &session_data_out;
-    sessions_data_out.rspAuths = &session_data_out_array[0];
-    sessions_data_out.rspAuthsCount = 1;
-
     UINT32 rval = TSS2_RETRY_EXP(Tss2_Sys_LoadExternal(sapi_context, 0, NULL, &ctx.public,
             TPM2_RH_NULL, &ctx.rsa2048_handle, &name_ext, &sessions_data_out));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("LoadExternal failed. TPM Error:0x%x", rval);
+        LOG_PERR(Tss2_Sys_LoadExternal, rval);
         return false;
     }
 
@@ -142,13 +136,13 @@ static bool make_credential_and_save(TSS2_SYS_CONTEXT *sapi_context)
             &ctx.credential, &ctx.object_name, &cred_blob, &secret,
             &sessions_data_out));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("MakeCredential failed. TPM Error:0x%x", rval);
+        LOG_PERR(Tss2_Sys_MakeCredential, rval);
         return false;
     }
 
     rval = TSS2_RETRY_EXP(Tss2_Sys_FlushContext(sapi_context, ctx.rsa2048_handle));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("Flush loaded key failed. TPM Error:0x%x", rval);
+        LOG_PERR(Tss2_Sys_FlushContext, rval);
         return false;
     }
 
@@ -184,7 +178,7 @@ static bool on_option(char key, char *value) {
         ctx.flags.n = 1;
     } break;
     case 'o':
-        ctx.out_file_path = optarg;
+        ctx.out_file_path = value;
         ctx.flags.o = 1;
         break;
     }
@@ -199,10 +193,10 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
       {"sec"     ,required_argument, NULL, 's'},
       {"name"    ,required_argument, NULL, 'n'},
       {"out-file" ,required_argument, NULL, 'o'},
-      {NULL      ,no_argument      , NULL, '\0'}
     };
 
-    *opts = tpm2_options_new("e:s:n:o:", ARRAY_LEN(topts), topts, on_option, NULL);
+    *opts = tpm2_options_new("e:s:n:o:", ARRAY_LEN(topts), topts, on_option,
+                             NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }
@@ -213,7 +207,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
     if (!ctx.flags.e || !ctx.flags.n || !ctx.flags.o || !ctx.flags.s) {
         LOG_ERR("Expected options e, n, o and s");
-        return false;
+        return 1;
     }
 
     return make_credential_and_save(sapi_context) != true;

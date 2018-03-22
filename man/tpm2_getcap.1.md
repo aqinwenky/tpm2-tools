@@ -58,26 +58,35 @@ command.
     * handles-saved-session:
       Display handles about saved sessions.
 
+  * **-l**, **--list**:
+    List known supported capability names. These names can be
+    supplied as the argument to the **-c** option. Output is in a
+    YAML compliant list to stdout.
+
+    For example:
+```
+    - algorithms
+    - commands
+    - properties-fixed
+    ...
+```
+
 [common options](common/options.md)
 
 [common tcti options](common/tcti.md)
 
 # EXAMPLES
 
-```
-tpm2_getcap --capability="properties-fixed"
+To list the fixed properties of the TPM:
 
-```
+```tpm2_getcap --capability="properties-fixed"```
+
+To list the supported capability arguments to **-c**:
+
+```tpm2_getcap -l```
 
 # RETURNS
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
-
+[footer](common/footer.md)

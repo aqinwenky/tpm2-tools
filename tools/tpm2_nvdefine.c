@@ -1,5 +1,5 @@
 //**********************************************************************;
-// Copyright (c) 2015, Intel Corporation
+// Copyright (c) 2015-2018, Intel Corporation
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -35,20 +35,22 @@
 #include <string.h>
 #include <limits.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
-#include "tpm2_attr_util.h"
-#include "tpm2_options.h"
-#include "tpm2_password_util.h"
 #include "files.h"
 #include "log.h"
+#include "tpm2_attr_util.h"
+#include "tpm2_hierarchy.h"
+#include "tpm2_options.h"
+#include "tpm2_password_util.h"
+#include "tpm2_session.h"
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
 
 typedef struct tpm_nvdefine_ctx tpm_nvdefine_ctx;
 struct tpm_nvdefine_ctx {
     UINT32 nvIndex;
-    UINT32 authHandle;
+    TPMI_RH_PROVISION auth;
     UINT16 size;
     TPMA_NV nvAttribute;
     TPM2B_AUTH nvAuth;
@@ -57,7 +59,7 @@ struct tpm_nvdefine_ctx {
 };
 
 static tpm_nvdefine_ctx ctx = {
-    .authHandle = TPM2_RH_PLATFORM,
+    .auth = TPM2_RH_PLATFORM,
     .nvAttribute = 0,
     .session_data = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
     .nvAuth = TPM2B_EMPTY_INIT,
@@ -68,23 +70,8 @@ static int nv_space_define(TSS2_SYS_CONTEXT *sapi_context) {
 
     TPM2B_NV_PUBLIC public_info = TPM2B_EMPTY_INIT;
 
-    TPMS_AUTH_RESPONSE session_data_out;
-    TSS2_SYS_CMD_AUTHS sessions_data;
-    TSS2_SYS_RSP_AUTHS sessions_data_out;
-
-    TPMS_AUTH_COMMAND *session_data_array[1] = {
-        &ctx.session_data
-    };
-
-    TPMS_AUTH_RESPONSE *session_data_out_array[1] = {
-        &session_data_out
-    };
-
-    sessions_data_out.rspAuths = &session_data_out_array[0];
-    sessions_data.cmdAuths = &session_data_array[0];
-
-    sessions_data_out.rspAuthsCount = 1;
-    sessions_data.cmdAuthsCount = 1;
+    TSS2L_SYS_AUTH_RESPONSE sessions_data_out;
+    TSS2L_SYS_AUTH_COMMAND sessions_data = { 1, { ctx.session_data }};
 
     public_info.size = sizeof(TPMI_RH_NV_INDEX) + sizeof(TPMI_ALG_HASH)
             + sizeof(TPMA_NV) + sizeof(UINT16) + sizeof(UINT16);
@@ -107,11 +94,11 @@ static int nv_space_define(TSS2_SYS_CONTEXT *sapi_context) {
 
     public_info.nvPublic.dataSize = ctx.size;
 
-    TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_NV_DefineSpace(sapi_context, ctx.authHandle,
+    TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_NV_DefineSpace(sapi_context, ctx.auth,
             &sessions_data, &ctx.nvAuth, &public_info, &sessions_data_out));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("Failed to define NV area at index 0x%x (%d).Error:0x%x",
-                ctx.nvIndex, ctx.nvIndex, rval);
+        LOG_ERR("Failed to define NV area at index 0x%X", ctx.nvIndex);
+        LOG_PERR(Tss2_Sys_NV_DefineSpace, rval);
         return false;
     }
 
@@ -139,15 +126,10 @@ static bool on_option(char key, char *value) {
         }
         break;
     case 'a':
-        result = tpm2_util_string_to_uint32(value, &ctx.authHandle);
+        result = tpm2_hierarchy_from_optarg(value, &ctx.auth,
+                TPM2_HIERARCHY_FLAGS_O|TPM2_HIERARCHY_FLAGS_P);
         if (!result) {
-            LOG_ERR("Could not convert auth handle to number, got: \"%s\"",
-                    value);
-            return false;
-        }
-
-        if (ctx.authHandle == 0) {
-            LOG_ERR("Auth handle cannot be 0");
+            LOG_ERR("get h failed");
             return false;
         }
         break;
@@ -185,15 +167,17 @@ static bool on_option(char key, char *value) {
         }
         break;
     case 'L':
-        ctx.policy_file = optarg;
+        ctx.policy_file = value;
         break;
-    case 'S':
-        if (!tpm2_util_string_to_uint32(optarg, &ctx.session_data.sessionHandle)) {
-            LOG_ERR("Could not convert session handle to number, got: \"%s\"",
-                    value);
+    case 'S': {
+        tpm2_session *s = tpm2_session_restore(value);
+        if (!s) {
             return false;
         }
-        break;
+
+        ctx.session_data.sessionHandle = tpm2_session_get_handle(s);
+        tpm2_session_free(&s);
+    } break;
     }
 
     return true;
@@ -203,17 +187,18 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
 
     const struct option topts[] = {
         { "index",                  required_argument,  NULL,   'x' },
-        { "auth-handle",             required_argument,  NULL,   'a' },
+        { "auth-handle",            required_argument,  NULL,   'a' },
         { "size",                   required_argument,  NULL,   's' },
         { "attribute",              required_argument,  NULL,   't' },
-        { "handle-passwd",           required_argument,  NULL,   'P' },
-        { "index-passwd",            required_argument,  NULL,   'I' },
+        { "handle-passwd",          required_argument,  NULL,   'P' },
+        { "index-passwd",           required_argument,  NULL,   'I' },
         { "passwdInHex",            no_argument,        NULL,   'X' },
         { "policy-file",            required_argument,  NULL,   'L' },
-        { "input-session-handle",   required_argument,  NULL,   'S' },
+        { "session",                required_argument,  NULL,   'S' },
     };
 
-    *opts = tpm2_options_new("x:a:s:t:P:I:rwdL:S:X", ARRAY_LEN(topts), topts, on_option, NULL);
+    *opts = tpm2_options_new("x:a:s:t:P:I:rwdL:S:X", ARRAY_LEN(topts), topts,
+                             on_option, NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }

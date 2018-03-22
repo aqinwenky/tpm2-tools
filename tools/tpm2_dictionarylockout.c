@@ -1,5 +1,5 @@
 //**********************************************************************;
-// Copyright (c) 2015, Intel Corporation
+// Copyright (c) 2015-2018, Intel Corporation
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -34,11 +34,12 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
+#include "log.h"
 #include "tpm2_options.h"
 #include "tpm2_password_util.h"
-#include "log.h"
+#include "tpm2_session.h"
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
 
@@ -60,18 +61,8 @@ static dictionarylockout_ctx ctx = {
 
 bool dictionary_lockout_reset_and_parameter_setup(TSS2_SYS_CONTEXT *sapi_context) {
 
-    TPMS_AUTH_COMMAND *sessionDataArray[1];
-    sessionDataArray[0] = &ctx.session_data;
-
-    TSS2_SYS_CMD_AUTHS sessionsData = { .cmdAuths = &sessionDataArray[0],
-            .cmdAuthsCount = 1 };
-
-    //Response Auths
-    TPMS_AUTH_RESPONSE *sessionDataOutArray[1], sessionDataOut;
-    sessionDataOutArray[0] = &sessionDataOut;
-
-    TSS2_SYS_RSP_AUTHS sessionsDataOut = { .rspAuths = &sessionDataOutArray[0],
-            .rspAuthsCount = 1 };
+    TSS2L_SYS_AUTH_COMMAND sessionsData = { 1, { ctx.session_data }};
+    TSS2L_SYS_AUTH_RESPONSE sessionsDataOut;
 
     /*
      * If setup params and clear lockout are both required, clear lockout should
@@ -83,7 +74,7 @@ bool dictionary_lockout_reset_and_parameter_setup(TSS2_SYS_CONTEXT *sapi_context
         UINT32 rval = TSS2_RETRY_EXP(Tss2_Sys_DictionaryAttackLockReset(sapi_context,
                 TPM2_RH_LOCKOUT, &sessionsData, &sessionsDataOut));
         if (rval != TPM2_RC_SUCCESS) {
-            LOG_ERR("0x%X Error clearing dictionary lockout.", rval);
+            LOG_PERR(Tss2_Sys_DictionaryAttackLockReset, rval);
             return false;
         }
     }
@@ -95,9 +86,7 @@ bool dictionary_lockout_reset_and_parameter_setup(TSS2_SYS_CONTEXT *sapi_context
                 ctx.recovery_time, ctx.lockout_recovery_time,
                 &sessionsDataOut));
         if (rval != TPM2_RC_SUCCESS) {
-            LOG_ERR(
-                    "0x%X Failed setting up dictionary_attack_lockout_reset params",
-                    rval);
+            LOG_PERR(Tss2_Sys_DictionaryAttackParameters, rval);
             return false;
         }
     }
@@ -152,13 +141,15 @@ static bool on_option(char key, char *value) {
             return false;
         }
         break;
-    case 'S':
-        if (!tpm2_util_string_to_uint32(value, &ctx.session_data.sessionHandle)) {
-            LOG_ERR("Could not convert session handle to number, got: \"%s\"",
-                    value);
+    case 'S': {
+        tpm2_session *s = tpm2_session_restore(value);
+        if (!s) {
             return false;
         }
-        break;
+
+        ctx.session_data.sessionHandle = tpm2_session_get_handle(s);
+        tpm2_session_free(&s);
+    } break;
     }
 
     return true;
@@ -167,16 +158,17 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     const struct option topts[] = {
-        { "max-tries", required_argument, NULL, 'n' },
-        { "recovery-time", required_argument, NULL, 't' },
+        { "max-tries",             required_argument, NULL, 'n' },
+        { "recovery-time",         required_argument, NULL, 't' },
         { "lockout-recovery-time", required_argument, NULL, 'l' },
-        { "lockout-passwd", required_argument, NULL, 'P' },
-        { "clear-lockout", no_argument, NULL, 'c' },
-        { "setup-parameters", no_argument, NULL, 's' },
-        { "input-session-handle",required_argument,NULL,'S'},
+        { "lockout-passwd",        required_argument, NULL, 'P' },
+        { "clear-lockout",         no_argument,       NULL, 'c' },
+        { "setup-parameters",      no_argument,       NULL, 's' },
+        { "input-session-handle",  required_argument, NULL, 'S' },
     };
 
-    *opts = tpm2_options_new("n:t:l:P:S:cs", ARRAY_LEN(topts), topts, on_option, NULL);
+    *opts = tpm2_options_new("n:t:l:P:S:cs", ARRAY_LEN(topts), topts, on_option,
+                             NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }

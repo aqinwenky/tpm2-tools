@@ -1,5 +1,5 @@
 //**********************************************************************;
-// Copyright (c) 2015, Intel Corporation
+// Copyright (c) 2015-2018, Intel Corporation
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -34,14 +34,15 @@
 #include <string.h>
 #include <errno.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
+#include "tpm2_convert.h"
 #include "files.h"
 #include "log.h"
 #include "pcr.h"
-#include "conversion.h"
 #include "tpm2_alg_util.h"
 #include "tpm2_password_util.h"
+#include "tpm2_session.h"
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
 
@@ -54,31 +55,20 @@ static TPMS_AUTH_COMMAND sessionData;
 static char *outFilePath;
 static char *signature_path;
 static char *message_path;
-static signature_format sig_format;
+static tpm2_convert_sig_fmt sig_format;
 static TPMI_ALG_HASH sig_hash_algorithm;
 static TPM2B_DATA qualifyingData = TPM2B_EMPTY_INIT;
 static TPML_PCR_SELECTION  pcrSelections;
-static bool is_auth_session;
-static TPMI_SH_AUTH_SESSION auth_session_handle;
 static int k_flag, c_flag, l_flag, g_flag, L_flag, o_flag, G_flag;
 static char *contextFilePath;
 static TPM2_HANDLE akHandle;
-
-static void PrintBuffer( UINT8 *buffer, UINT32 size )
-{
-    UINT32 i;
-    for( i = 0; i < size; i++ )
-    {
-        tpm2_tool_output("%2.2x", buffer[i]);
-    }
-    tpm2_tool_output("\n");
-}
+static TPMS_AUTH_COMMAND session_data = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW);
 
 static bool write_output_files(TPM2B_ATTEST *quoted, TPMT_SIGNATURE *signature) {
 
     bool res = true;
     if (signature_path) {
-        res &= tpm2_convert_signature(signature, sig_format, signature_path);
+        res &= tpm2_convert_sig(signature, sig_format, signature_path);
     }
 
     if (message_path) {
@@ -94,53 +84,39 @@ static int quote(TSS2_SYS_CONTEXT *sapi_context, TPM2_HANDLE akHandle, TPML_PCR_
 {
     UINT32 rval;
     TPMT_SIG_SCHEME inScheme;
-    TPMS_AUTH_RESPONSE sessionDataOut;
-    TSS2_SYS_CMD_AUTHS sessionsData;
-    TSS2_SYS_RSP_AUTHS sessionsDataOut;
+    TSS2L_SYS_AUTH_RESPONSE sessionsDataOut;
     TPM2B_ATTEST quoted = TPM2B_TYPE_INIT(TPM2B_ATTEST, attestationData);
     TPMT_SIGNATURE signature;
-
-    TPMS_AUTH_COMMAND *sessionDataArray[1];
-    TPMS_AUTH_RESPONSE *sessionDataOutArray[1];
-
-    sessionDataArray[0] = &sessionData;
-    sessionDataOutArray[0] = &sessionDataOut;
-
-    sessionsDataOut.rspAuths = &sessionDataOutArray[0];
-    sessionsData.cmdAuths = &sessionDataArray[0];
-
-    sessionsDataOut.rspAuthsCount = 1;
-    sessionsData.cmdAuthsCount = 1;
-
-    sessionData.sessionHandle = TPM2_RS_PW;
-    if (is_auth_session) {
-        sessionData.sessionHandle = auth_session_handle;
-    }
-
-    sessionData.nonce.size = 0;
-    *( (UINT8 *)((void *)&sessionData.sessionAttributes ) ) = 0;
+    TSS2L_SYS_AUTH_COMMAND cmd_auth_array = {
+        1, {
+            session_data,
+         },
+    };
 
     if(!G_flag || !get_signature_scheme(sapi_context, akHandle, sig_hash_algorithm, &inScheme)) {
         inScheme.scheme = TPM2_ALG_NULL;
     }
 
-    memset( (void *)&signature, 0, sizeof(signature) );
-
-    rval = TSS2_RETRY_EXP(Tss2_Sys_Quote(sapi_context, akHandle, &sessionsData,
+    rval = TSS2_RETRY_EXP(Tss2_Sys_Quote(sapi_context, akHandle, &cmd_auth_array,
             &qualifyingData, &inScheme, pcrSelection, &quoted,
             &signature, &sessionsDataOut));
     if(rval != TPM2_RC_SUCCESS)
     {
-        printf("\nQuote Failed ! ErrorCode: 0x%0x\n\n", rval);
+        LOG_PERR(Tss2_Sys_Quote, rval);
         return -1;
     }
 
-    tpm2_tool_output( "\nquoted:\n " );
-    tpm2_util_print_tpm2b( (TPM2B *)&quoted );
-    //PrintTPM2B_ATTEST(&quoted);
-    tpm2_tool_output( "\nsignature:\n " );
-    PrintBuffer( (UINT8 *)&signature, sizeof(signature) );
-    //PrintTPMT_SIGNATURE(&signature);
+    tpm2_tool_output( "quoted: " );
+    tpm2_util_print_tpm2b((TPM2B *)&quoted);
+    tpm2_tool_output("\nsignature:\n" );
+    tpm2_tool_output("  alg: %s\n", tpm2_alg_util_algtostr(signature.sigAlg));
+
+    UINT16 size;
+    BYTE *sig = tpm2_extract_plain_signature(&size, &signature);
+    tpm2_tool_output("  sig: ");
+    tpm2_util_hexdump(sig, size);
+    tpm2_tool_output("\n");
+    free(sig);
 
     bool res = write_output_files(&quoted, &signature);
     return res == true ? 0 : 1;
@@ -159,7 +135,7 @@ static bool on_option(char key, char *value) {
         k_flag = 1;
         break;
     case 'c':
-        contextFilePath = optarg;
+        contextFilePath = value;
         c_flag = 1;
         break;
 
@@ -179,7 +155,7 @@ static bool on_option(char key, char *value) {
         l_flag = 1;
         break;
     case 'g':
-        pcrSelections.pcrSelections[0].hash = tpm2_alg_util_from_optarg(optarg);
+        pcrSelections.pcrSelections[0].hash = tpm2_alg_util_from_optarg(value);
         if (pcrSelections.pcrSelections[0].hash == TPM2_ALG_ERROR)
         {
             LOG_ERR("Could not convert pcr hash selection, got: \"%s\"", value);
@@ -197,7 +173,7 @@ static bool on_option(char key, char *value) {
         L_flag = 1;
         break;
     case 'o':
-        outFilePath = optarg;
+        outFilePath = value;
         o_flag = 1;
         break;
     case 'q':
@@ -208,29 +184,30 @@ static bool on_option(char key, char *value) {
             return false;
         }
         break;
-    case 'S':
-         if (!tpm2_util_string_to_uint32(value, &auth_session_handle)) {
-             LOG_ERR("Could not convert session handle to number, got: \"%s\"",
-                     optarg);
-             return false;
-         }
-         is_auth_session = true;
-         break;
+    case 'S': {
+        tpm2_session *s = tpm2_session_restore(value);
+        if (!s) {
+            return false;
+        }
+
+        session_data.sessionHandle = tpm2_session_get_handle(s);
+        tpm2_session_free(&s);
+    } break;
     case 's':
-         signature_path = optarg;
+         signature_path = value;
          break;
     case 'm':
-         message_path = optarg;
+         message_path = value;
          break;
     case 'f':
-         sig_format = tpm2_parse_signature_format(optarg);
+         sig_format = tpm2_convert_sig_fmt_from_optarg(value);
 
          if (sig_format == signature_format_err) {
             return false;
          }
          break;
     case 'G':
-        sig_hash_algorithm = tpm2_alg_util_from_optarg(optarg);
+        sig_hash_algorithm = tpm2_alg_util_from_optarg(value);
         if(sig_hash_algorithm == TPM2_ALG_ERROR) {
             LOG_ERR("Could not convert signature hash algorithm selection, got: \"%s\"", value);
             return false;
@@ -245,14 +222,14 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     static const struct option topts[] = {
-        { "ak-handle",             required_argument, NULL, 'k' },
-        { "ak-context",            required_argument, NULL, 'c' },
-        { "ak-password",           required_argument, NULL, 'P' },
-        { "id-list",               required_argument, NULL, 'l' },
+        { "ak-handle",            required_argument, NULL, 'k' },
+        { "ak-context",           required_argument, NULL, 'c' },
+        { "ak-passwd",            required_argument, NULL, 'P' },
+        { "id-list",              required_argument, NULL, 'l' },
         { "algorithm",            required_argument, NULL, 'g' },
-        { "sel-list",              required_argument, NULL, 'L' },
-        { "qualify-data",          required_argument, NULL, 'q' },
-        { "input-session-handle", required_argument, NULL, 'S' },
+        { "sel-list",             required_argument, NULL, 'L' },
+        { "qualify-data",         required_argument, NULL, 'q' },
+        { "session",              required_argument, NULL, 'S' },
         { "signature",            required_argument, NULL, 's' },
         { "message",              required_argument, NULL, 'm' },
         { "format",               required_argument, NULL, 'f' },
@@ -260,7 +237,7 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
     };
 
     *opts = tpm2_options_new("k:c:P:l:g:L:o:S:q:s:m:f:G:", ARRAY_LEN(topts), topts,
-            on_option, NULL);
+                             on_option, NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }
@@ -276,7 +253,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     }
 
     if(c_flag) {
-        bool result = files_load_tpm_context_from_file(sapi_context, &akHandle, contextFilePath);
+        bool result = files_load_tpm_context_from_path(sapi_context, &akHandle, contextFilePath);
         if (!result) {
             return 1;
         }

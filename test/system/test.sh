@@ -32,12 +32,12 @@
 #;**********************************************************************;
 
 # We Assume that the tests are run from the system/test location.
-SRC_DIR=`realpath ../../tools/`
-PATH=$SRC_DIR:$PATH
+SRC_DIR=`readlink -f ../../tools/`
+PATH=$SRC_DIR:$SRC_DIR/aux:$PATH
 
 # Some test helpers are in the test directory
 # and might be needed on PATH
-TEST_DIR=`realpath .`
+TEST_DIR=`readlink -f .`
 PATH=$TEST_DIR:$PATH
 
 # Keep track of failures and successes for reporting
@@ -58,6 +58,12 @@ end=$'\e[0m'
 # Set the default to print in a prety output
 PRETTY=true
 
+# Disable errata by default
+ERRATA_ENABLED=false
+
+# Do not run tcti specific tests by default
+TCTI_TESTS=""
+
 clear_colors() {
   red=''
   grn=''
@@ -70,7 +76,7 @@ clear_colors() {
 
 test_wrapper() {
 
-  ./$1 &
+  PATH=$PATH ./$1 &
   # Process Id of the previous running command
   pid=$!
   spin='-\|/'
@@ -116,29 +122,30 @@ test_wrapper() {
   fi
 }
 
-# Get a list of test scripts, all tests should begin with test_tpm2_ and
-# be a shell script.
-tests=`ls test_tpm2_*.sh test_output_formats.sh | sed s/test_tpm2_import\.sh//g`
-
-# Building with asan on clang, the leak sanitizier
-# portion (lsan) on ancient versions is:
-# 1. Detecting a leak that (maybe) doesn't exist.
-#    OpenSSL is hard...
-# 2. The suppression option via ASAN_OPTIONS doesn't
-#    exist for 3.6.
-# TODO When this is fixed, remove it.
-# Bug: https://github.com/01org/tpm2-tools/issues/390
-if [ "$ASAN_ENABLED" == "true" ]; then
-  tests=`echo $tests | grep -v test_tpm2_getmanufec.sh`
-fi
-
-while true; do
-  case "$1" in
-    -p | --plain ) PRETTY=false; shift ;;
-    -- ) shift; break ;;
-    * ) break ;;
+# Handle options
+while getopts "pZt:" opt; do
+  case $opt in
+    p) PRETTY=false;;
+    Z) ERRATA_ENABLED=true;;
+    t) TCTI_TESTS="$OPTARG";;
+   \?) echo "Invalid option: -$OPTARG" >&2; exit 1;;
+    :) echo "Option -$OPTARG requires an argument." >&2; exit 1;;
   esac
 done
+shift $((OPTIND -1))
+
+# Get a list of test scripts, all tests should begin with test_tpm2_ and
+# be a shell script.
+tests=`find tests -maxdepth 1 -type f`
+
+# Add tcti tests if specified and found..
+if [ -n "$TCTI_TESTS" ]; then
+  tcti_tests=`find tests/tcti/$TCTI_TESTS -maxdepth 1 -type f`
+  if [ -z "$tcti_tests" ]; then
+    echo "WARN: Found 0 tcti tests for tcti: $TCTI_TESTS"
+  fi
+  tests="$tests $tcti_tests"
+fi
 
 # If command line arguments are provided, assume it is
 # the test suite to execute.
@@ -149,6 +156,10 @@ fi
 
 if [ "$PRETTY" != true ]; then
   clear_colors
+fi
+
+if [ "$ERRATA_ENABLED" = true ]; then
+  export TPM2TOOLS_ENABLE_ERRATA=1
 fi
 
 for t in $tests; do

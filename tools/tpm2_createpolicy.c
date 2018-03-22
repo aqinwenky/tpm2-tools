@@ -1,5 +1,5 @@
 //**********************************************************************;
-// Copyright (c) 2015, Intel Corporation
+// Copyright (c) 2015-2018, Intel Corporation
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -33,30 +33,29 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
-#include "tpm2_options.h"
 #include "files.h"
 #include "log.h"
 #include "pcr.h"
-#include "tpm2_policy.h"
 #include "tpm2_alg_util.h"
+#include "tpm2_options.h"
+#include "tpm2_policy.h"
 #include "tpm2_tool.h"
+#include "tpm2_util.h"
 
 //Records the type of policy and if one is selected
 typedef struct {
     bool PolicyPCR;
-    bool is_policy_type_selected;
 }policy_type;
 
 //Common policy options
 typedef struct tpm2_common_policy_options tpm2_common_policy_options;
 struct tpm2_common_policy_options {
-    SESSION *policy_session; // policy session
+    tpm2_session *policy_session; // policy session
     TPM2_SE policy_session_type; // TPM2_SE_TRIAL or TPM2_SE_POLICY
     TPM2B_DIGEST policy_digest; // buffer to hold policy digest
     TPMI_ALG_HASH policy_digest_hash_alg; // hash alg of final policy digest
-    bool extend_policy_session; // if policy session should persist
     char *policy_file; // filepath for the policy digest
     bool policy_file_flag; // if policy file input has been given
     policy_type policy_type;
@@ -65,10 +64,9 @@ struct tpm2_common_policy_options {
 
 //pcr policy options
 typedef struct  tpm2_pcr_policy_options tpm2_pcr_policy_options;
-struct tpm2_pcr_policy_options{
+struct tpm2_pcr_policy_options {
     char *raw_pcrs_file; // filepath of input raw pcrs file
     TPML_PCR_SELECTION pcr_selections; // records user pcr selection per setlist
-    bool is_set_list; // if user has provided the setlist choice
 };
 
 typedef struct create_policy_ctx create_policy_ctx;
@@ -88,57 +86,65 @@ static create_policy_ctx pctx = {
     .common_policy_options = TPM2_COMMON_POLICY_INIT
 };
 
-static TSS2_RC parse_policy_type_specific_command(TSS2_SYS_CONTEXT *sapi_context) {
-    TSS2_RC rval = TPM2_RC_SUCCESS;
-    if (!pctx.common_policy_options.policy_type.is_policy_type_selected){
-        LOG_ERR("No Policy type chosen.");
-        return rval;
+static bool parse_policy_type_specific_command(TSS2_SYS_CONTEXT *sapi_context) {
+
+    if (!pctx.common_policy_options.policy_type.PolicyPCR){
+        LOG_ERR("Only PCR policy is currently supported!");
+        return false;
     }
 
-    if (pctx.common_policy_options.policy_type.PolicyPCR) {
-        //PCR inputs validation
-        if (pctx.pcr_policy_options.is_set_list == false) {
-            LOG_ERR("Need the pcr list to account for in the policy.");
-            return TPM2_RC_NO_RESULT;
-        }
-        rval = tpm2_policy_build(sapi_context,
-                                 &pctx.common_policy_options.policy_session,
-                                 pctx.common_policy_options.policy_session_type,
-                                 pctx.common_policy_options.policy_digest_hash_alg,
-                                 pctx.pcr_policy_options.pcr_selections,
-                                 pctx.pcr_policy_options.raw_pcrs_file,
-                                 &pctx.common_policy_options.policy_digest,
-                                 pctx.common_policy_options.extend_policy_session,
-                                 tpm2_policy_pcr_build);
-        if (rval != TPM2_RC_SUCCESS) {
-            return rval;
-        }
+    tpm2_session_data *session_data =
+            tpm2_session_data_new(pctx.common_policy_options.policy_session_type);
+    if (!session_data) {
+        LOG_ERR("oom");
+        return false;
+    }
 
-        // Display the policy digest during real policy session.
-        if (pctx.common_policy_options.policy_session_type == TPM2_SE_POLICY) {
-            tpm2_tool_output("TPM2_SE_POLICY: 0x");
-            int i;
-            for(i = 0; i < pctx.common_policy_options.policy_digest.size; i++) {
-                tpm2_tool_output("%02X", pctx.common_policy_options.policy_digest.buffer[i]);
-            }
-            tpm2_tool_output("\n");
-        }
+    tpm2_session_set_authhash(session_data,
+            pctx.common_policy_options.policy_digest_hash_alg);
 
-        // Additional operations when session if a trial policy session
-        if (pctx.common_policy_options.policy_session_type == TPM2_SE_TRIAL) {
-            //save the policy buffer in a file for use later
-            bool result = files_save_bytes_to_file(pctx.common_policy_options.policy_file,
-                              (UINT8 *) &pctx.common_policy_options.policy_digest.buffer,
-                                          pctx.common_policy_options.policy_digest.size);
-            if (!result) {
-                LOG_ERR("Failed to save policy digest into file \"%s\"",
-                        pctx.common_policy_options.policy_file);
-                return TPM2_RC_NO_RESULT;
-            }
+    pctx.common_policy_options.policy_session = tpm2_session_new(sapi_context,
+            session_data);
+
+    bool result = tpm2_policy_build_pcr(sapi_context, pctx.common_policy_options.policy_session,
+            pctx.pcr_policy_options.raw_pcrs_file,
+            &pctx.pcr_policy_options.pcr_selections);
+    if (!result) {
+        LOG_ERR("Could not start tpm session");
+        return false;
+    }
+
+    result = tpm2_policy_get_digest(sapi_context, pctx.common_policy_options.policy_session,
+            &pctx.common_policy_options.policy_digest);
+    if (!result) {
+        LOG_ERR("Could not build tpm policy");
+        return false;
+    }
+
+    // Display the policy digest during real policy session.
+    if (pctx.common_policy_options.policy_session_type == TPM2_SE_POLICY) {
+        tpm2_tool_output("policy-digest: 0x");
+        int i;
+        for(i = 0; i < pctx.common_policy_options.policy_digest.size; i++) {
+            tpm2_tool_output("%02X", pctx.common_policy_options.policy_digest.buffer[i]);
+        }
+        tpm2_tool_output("\n");
+    }
+
+    // Additional operations when session if a trial policy session
+    if (pctx.common_policy_options.policy_session_type == TPM2_SE_TRIAL) {
+        //save the policy buffer in a file for use later
+        bool result = files_save_bytes_to_file(pctx.common_policy_options.policy_file,
+                          (UINT8 *) &pctx.common_policy_options.policy_digest.buffer,
+                                      pctx.common_policy_options.policy_digest.size);
+        if (!result) {
+            LOG_ERR("Failed to save policy digest into file \"%s\"",
+                    pctx.common_policy_options.policy_file);
+            return false;
         }
     }
 
-    return rval;
+    return true;
 }
 
 static bool on_option(char key, char *value) {
@@ -163,21 +169,12 @@ static bool on_option(char key, char *value) {
         if (!pcr_parse_selections(value, &pctx.pcr_policy_options.pcr_selections)) {
             return false;
         }
-        pctx.pcr_policy_options.is_set_list = true;
         break;
     case 'P':
         pctx.common_policy_options.policy_type.PolicyPCR = true;
-        pctx.common_policy_options.policy_type.is_policy_type_selected= true;
         break;
     case 'a':
         pctx.common_policy_options.policy_session_type = TPM2_SE_POLICY;
-        pctx.common_policy_options.extend_policy_session = true;
-        break;
-    case 'e':
-        pctx.common_policy_options.extend_policy_session = true;
-        break;
-    case 'S':
-        pctx.common_policy_options.context_file = value;
         break;
     }
 
@@ -187,17 +184,16 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     const struct option topts[] = {
-        { "policy-file",    required_argument,  NULL,   'f' },
-        { "policy-digest-alg", required_argument, NULL, 'g'},
-        { "set-list",       required_argument,  NULL,   'L' },
-        { "pcr-input-file", required_argument,  NULL,   'F' },
-        { "policy-pcr",     no_argument,        NULL,   'P' },
-        { "auth-policy-session", no_argument, NULL,     'a'},
-        { "extend-policy-session", no_argument, NULL,   'e'},
-        { "save-session-context",  required_argument, NULL, 'S' },   
+        { "policy-file",         required_argument, NULL, 'f' },
+        { "policy-digest-alg",   required_argument, NULL, 'g' },
+        { "set-list",            required_argument, NULL, 'L' },
+        { "pcr-input-file",      required_argument, NULL, 'F' },
+        { "policy-pcr",          no_argument,       NULL, 'P' },
+        { "auth-policy-session", no_argument,       NULL, 'a' },
     };
 
-    *opts = tpm2_options_new("f:g:L:F:PaeS:", ARRAY_LEN(topts), topts, on_option, NULL);
+    *opts = tpm2_options_new("f:g:L:F:Pa", ARRAY_LEN(topts), topts, on_option,
+                             NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }
@@ -213,23 +209,9 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
         return 1;
     }
 
-    if (parse_policy_type_specific_command(sapi_context) != TPM2_RC_SUCCESS) {
+    bool result = parse_policy_type_specific_command(sapi_context);
+    if (!result) {
         return 1;
-    }
-
-    if (pctx.common_policy_options.extend_policy_session) {
-        TPM2_HANDLE handle;
-
-        handle = pctx.common_policy_options.policy_session->sessionHandle;
-
-        LOG_INFO("EXTENDED_POLICY_SESSION_HANDLE: 0x%08X\n", handle);
-
-        const char *file = pctx.common_policy_options.context_file;
-
-        if (file) {
-            return files_save_tpm_context_to_file(sapi_context,
-                                                  handle, file) != true;
-        }
     }
 
     return 0; 

@@ -34,8 +34,10 @@ specified symmetric key.
   * **-I**, **--in-file**=_INPUT\_FILE_:
     Input file path containing data for decrypt or encrypt operation.
 
-  * **-S**, **--input-session-handle**=_SESSION\_HANDLE_:
-    Optional Input session handle from a policy session for authorization.
+  * **-S**, **--session**=_SESSION\_FILE_:
+
+    Optional, A session file from **tpm2_startauthsession**(1)'s **-S** option. This session
+    is used in lieu of starting a session and using the PCR policy options.
 
 [common options](common/options.md)
 
@@ -55,11 +57,4 @@ tpm2_encryptdecrypt -k 0x81010001 -P 123abca -X -D NO -I <filePath> -o <filePath
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
-
+[footer](common/footer.md)

@@ -35,7 +35,7 @@ sign.
     Also, see section "Supported Hash Algorithms" for a list of supported hash
     algorithms.
 
-  * **-o**, **--outfile**=_OUT\_FILE_
+  * **-o**, **--out-file**=_OUT\_FILE_
     Optional file record of the hash result. Defaults to stdout in hex form.
 
   * **-t**, **--ticket**=_TICKET\_FILE_
@@ -61,11 +61,4 @@ tpm2_hash -H e -g sha1 -o hash.bin -t ticket.bin data.txt
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
-
+[footer](common/footer.md)

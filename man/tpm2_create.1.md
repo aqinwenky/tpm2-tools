@@ -20,7 +20,7 @@ The object will need to be loaded before it may be used.
 
 These options for creating the tpm entity:
 
-  * **-H**, **--pparent**=_PARENT\_HANDLE_:
+  * **-H**, **--parent**=_PARENT\_HANDLE_:
     The handle of the parent object to create this object under.
 
   * **-c**, **--context-parent**=_PARENT\_CONTEXT\_FILE_:
@@ -49,7 +49,7 @@ These options for creating the tpm entity:
     The object attributes, optional. Object attribytes follow the specifications
     as outlined in "object attribute specifiers". The default for created objects is:
 
-    `TPMA_OBJECT_SIGN|TPMA_OBJECT_FIXEDTPM|TPMA_OBJECT_FIXEDPARENT|TPMA_OBJECT_SENSITIVEDATAORIGIN|TPMA_OBJECT_USERWITHAUTH`
+    `TPMA_OBJECT_SIGN_ENCRYPT|TPMA_OBJECT_FIXEDTPM|TPMA_OBJECT_FIXEDPARENT|TPMA_OBJECT_SENSITIVEDATAORIGIN|TPMA_OBJECT_USERWITHAUTH`
 
   * **-I**, **--in-file**=_FILE_:
     The data file to be sealed, optional. If file is -, read from stdin.
@@ -64,8 +64,10 @@ These options for creating the tpm entity:
   * **-r**, **--privfile**=_OUTPUT\_PRIVATE\_FILE_:
     The output file which contains the sensitive portion of the object, optional.
 
-* **-S**, **--input-session-handle**=_SESSION\_HANDLE_:
-    Optional Input session handle from a policy session for authorization.
+  * **-S**, **--session**=_SESSION\_FILE_:
+
+    Optional, A session file from **tpm2_startauthsession**(1)'s **-S** option. This session
+    is used in lieu of starting a session and using the PCR policy options.
 
 [common options](common/options.md)
 
@@ -93,11 +95,4 @@ tpm2_create -H 0x81010001 -P 123abc -K 456def -X -g sha256 -G keyedhash -I data.
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
-
+[footer](common/footer.md)

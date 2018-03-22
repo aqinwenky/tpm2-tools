@@ -42,10 +42,6 @@ The key referenced by keyHandle is **required** to be:
     xxd compatible hexdump to stdout. If a file is specified, raw binary
     output is performed.
 
-  * **-S**, **--input-session-handle**=_SESSION\_HANDLE_:
-
-    Optional Input session handle from a policy session for authorization.
-
 [common options](common/options.md)
 
 [common tcti options](common/tcti.md)
@@ -62,10 +58,4 @@ tpm2_rsaencrypt -k 0x81010001 -I plain.in -o encrypted.out
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
+[footer](common/footer.md)

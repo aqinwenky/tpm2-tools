@@ -20,10 +20,12 @@ defined with tpm2_nvdefine(1).
   * **-x**, **--index**=_NV\_INDEX_:
     Specifies the index to release.
 
-  * **-a**, **--auth-handle**=_SECRET\_DATA\_FILE_:
-    specifies the handle used to authorize:
-    * **0x40000001** for **TPM_RH_OWNER**
-    * **0x4000000C** for **TPM_RH_PLATFORM**
+  * **-a**, **--auth-handle**=_AUTH_:
+    specifies the handle used to authorize.
+    Supported options are:
+      * **o** for **TPM_RH_OWNER**
+      * **p** for **TPM_RH_PLATFORM**
+      * **`<num>`** where a raw number can be used.
 
   * **-s**, **--size**=_SIZE_:
     specifies the size of data area in bytes.
@@ -32,8 +34,9 @@ defined with tpm2_nvdefine(1).
     specifies the password of authHandle. Passwords should follow the
     "password formatting standards, see section "Password Formatting".
 
-  * **-S**, **--input-session-handle**=_SIZE_:
-    Optional Input session handle from a policy session for authorization.
+  * **-S**, **--session**=_SESSION\_FILE_:
+
+    Optional, A session file from **tpm2_startauthsession**(1)'s **-S** option.
 
 [common options](common/options.md)
 
@@ -51,10 +54,4 @@ tpm2_nvrelease -x 0x1500016 -a 0x40000001 -P passwd
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
+[footer](common/footer.md)

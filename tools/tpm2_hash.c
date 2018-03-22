@@ -36,12 +36,12 @@
 #include <limits.h>
 #include <ctype.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
 #include "files.h"
 #include "log.h"
 #include "tpm2_alg_util.h"
-#include "tpm_hash.h"
+#include "tpm2_hash.h"
 #include "tpm2_options.h"
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
@@ -95,15 +95,14 @@ static bool hash_and_save(TSS2_SYS_CONTEXT *sapi_context) {
     TPM2B_DIGEST outHash = TPM2B_TYPE_INIT(TPM2B_DIGEST, buffer);
     TPMT_TK_HASHCHECK validation;
 
-    TSS2_RC rval = tpm_hash_file(sapi_context, ctx.halg, ctx.hierarchyValue, ctx.input_file, &outHash, &validation);
-    if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("tpm_hash_files() failed with error: 0x%X", rval);
+    bool res = tpm2_hash_file(sapi_context, ctx.halg, ctx.hierarchyValue, ctx.input_file, &outHash, &validation);
+    if (!res) {
         return false;
     }
 
     if (outHash.size) {
         UINT16 i;
-        tpm2_tool_output("hash(%s):", tpm2_alg_util_algtostr(ctx.halg));
+        tpm2_tool_output("%s: ", tpm2_alg_util_algtostr(ctx.halg));
         for (i = 0; i < outHash.size; i++) {
             tpm2_tool_output("%02x", outHash.buffer[i]);
         }
@@ -181,16 +180,17 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     static struct option topts[] = {
-        {"hierachy", required_argument, NULL, 'H'},
-        {"halg",     required_argument, NULL, 'g'},
-        {"outfile",  required_argument, NULL, 'o'},
-        {"ticket",   required_argument, NULL, 't'},
+        {"hierarchy", required_argument, NULL, 'H'},
+        {"halg",      required_argument, NULL, 'g'},
+        {"out-file",  required_argument, NULL, 'o'},
+        {"ticket",    required_argument, NULL, 't'},
     };
 
     /* set up non-static defaults here */
     ctx.input_file = stdin;
 
-    *opts = tpm2_options_new("H:g:o:t:", ARRAY_LEN(topts), topts, on_option, on_args);
+    *opts = tpm2_options_new("H:g:o:t:", ARRAY_LEN(topts), topts, on_option,
+                             on_args, 0);
 
     return *opts != NULL;
 }

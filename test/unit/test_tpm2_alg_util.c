@@ -31,7 +31,7 @@
 #include <stdio.h>
 
 #include <cmocka.h>
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
 #include "tpm2_util.h"
 #include "tpm2_alg_util.h"
@@ -332,7 +332,7 @@ static void test_pcr_parse_digest_list_compound(void **state) {
     assert_int_equal(3, dspec->digests.count);
 
     size_t i;
-    for (i=0; i < dspec->digests.count; i++) {
+    for (i=0; i < dspec->digests.count && i < TPM2_NUM_PCR_BANKS; i++) {
         TPMT_HA *digest = &dspec->digests.digests[i];
 
         switch (i) {
@@ -346,7 +346,7 @@ static void test_pcr_parse_digest_list_compound(void **state) {
             test_digest_sha512(digest);
             break;
         default:
-            fail_msg("Missing algorithm test for: %u", dspec->digests.digests[i].hashAlg);
+            fail_msg("Missing algorithm test for: %u", digest->hashAlg);
         }
     }
 }

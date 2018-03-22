@@ -35,7 +35,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
 #include "tpm2_options.h"
 #include "log.h"
@@ -142,7 +142,7 @@ static bool read_pcr_values(TSS2_SYS_CONTEXT *sapi_context) {
                 &ctx.pcrs.pcr_values[ctx.pcrs.count], 0));
 
         if (rval != TPM2_RC_SUCCESS) {
-            LOG_ERR("read pcr failed. tpm error 0x%0x", rval);
+            LOG_PERR(Tss2_Sys_PCR_Read, rval);
             return -1;
         }
 
@@ -251,9 +251,9 @@ static bool show_pcr_values(void) {
         const char *alg_name = tpm2_alg_util_algtostr(
                 ctx.pcr_selections.pcrSelections[i].hash);
 
-        tpm2_tool_output("%s :\n", alg_name);
+        tpm2_tool_output("%s:\n", alg_name);
 
-        UINT32 pcr_id;
+        UINT8 pcr_id;
         for (pcr_id = 0; pcr_id < ctx.pcr_selections.pcrSelections[i].sizeofSelect * 8; pcr_id++) {
             if (!is_pcr_select_bit_set(&ctx.pcr_selections.pcrSelections[i],
                     pcr_id)) {
@@ -264,11 +264,11 @@ static bool show_pcr_values(void) {
                 return false;
             }
 
-            tpm2_tool_output("  %-2d : ", pcr_id);
+            tpm2_tool_output("  %-2d: 0x", pcr_id);
 
             int k;
             for (k = 0; k < ctx.pcrs.pcr_values[vi].digests[di].size; k++) {
-                tpm2_tool_output("%02x", ctx.pcrs.pcr_values[vi].digests[di].buffer[k]);
+                tpm2_tool_output("%02X", ctx.pcrs.pcr_values[vi].digests[di].buffer[k]);
             }
             tpm2_tool_output("\n");
 
@@ -333,9 +333,7 @@ static bool get_banks(TSS2_SYS_CONTEXT *sapi_context) {
     rval = TSS2_RETRY_EXP(Tss2_Sys_GetCapability(sapi_context, no_argument, TPM2_CAP_PCRS, no_argument, required_argument,
             &more_data, capability_data, 0));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR(
-                "GetCapability: Get PCR allocation status Error. TPM Error:0x%x......",
-                rval);
+        LOG_PERR(Tss2_Sys_GetCapability, rval);
         return false;
     }
 
@@ -395,14 +393,14 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
 
     static struct option topts[] = {
          { "algorithm", required_argument, NULL, 'g' },
-         { "output",    required_argument, NULL, 'o' },
+         { "out-file",  required_argument, NULL, 'o' },
          { "algs",      no_argument,       NULL, 's' },
-         { "sel-list",   required_argument, NULL, 'L' },
+         { "sel-list",  required_argument, NULL, 'L' },
          { "format",    required_argument, NULL, 'f' },
      };
 
     *opts = tpm2_options_new("g:o:L:s", ARRAY_LEN(topts), topts,
-            on_option, NULL);
+                             on_option, NULL, 0);
 
     return *opts != NULL;
 }

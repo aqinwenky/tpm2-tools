@@ -37,7 +37,7 @@ symmetric key, both the public and private portions need to be loaded.
     Also, see section "Supported Hash Algorithms" for a list of supported hash
     algorithms.
 
-  * **-m**, **--msg**=_MSG\_FILE_:
+  * **-m**, **--message**=_MSG\_FILE_:
 
     The message file, containing the content to be  digested.
 
@@ -81,14 +81,8 @@ tpm2_verifysignature -k 0x81010001 -D <filePath> -s <filePath> -t <filePath>
 tpm2_verifysignature -c key.context -g sha256 -m <filePath> -s <filePath> -t <filePath>
 ```
 
-RETURNS
+# RETURNS
 
 0 on success or 1 on failure.
 
-BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
+[footer](common/footer.md)

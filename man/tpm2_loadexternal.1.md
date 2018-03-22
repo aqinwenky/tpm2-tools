@@ -17,6 +17,10 @@ TPM.
 TPM. The command allows loading of a public area or both a public and a
 sensitive area.
 
+# Output
+The tool outputs the handle of the loaded object in hex. It is the form of a YAML
+scalar.
+
 # OPTIONS
 
   * **-H**, **--hierarchy**=_HIERARCHY_:
@@ -59,10 +63,4 @@ tpm2_loadexternal -H n -u <pubKeyFileName> -r <privKeyFileName> -C object.contex
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
+[footer](common/footer.md)

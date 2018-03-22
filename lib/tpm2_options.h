@@ -37,9 +37,7 @@
 
 #include <getopt.h>
 
-#include <sapi/tpm20.h>
-
-typedef struct tpm2_options tpm2_options;
+#include <tss2/tss2_sys.h>
 
 typedef union tpm2_option_flags tpm2_option_flags;
 union tpm2_option_flags {
@@ -98,6 +96,30 @@ typedef bool (*tpm2_option_handler)(char key, char *value);
 typedef bool (*tpm2_arg_handler)(int argc, char **argv);
 
 /**
+ * TPM2_OPTIONS_* flags change default behavior of the argument parser
+ *
+ * TPM2_OPTIONS_SHOW_USAGE:
+ *  Enable printing a short usage summary (I.e. help)
+ * TPM2_OPTIONS_NO_SAPI:
+ *  Skip SAPI initialization. Removes the "-T" common option.
+ */
+#define TPM2_OPTIONS_SHOW_USAGE 0x1
+#define TPM2_OPTIONS_NO_SAPI 0x2
+
+struct tpm2_options {
+    struct {
+        tpm2_option_handler on_opt;
+        tpm2_arg_handler on_arg;
+    } callbacks;
+    char *short_opts;
+    size_t len;
+    UINT32 flags;
+    struct option long_opts[];
+};
+
+typedef struct tpm2_options tpm2_options;
+
+/**
  * The onstart() routine expects a return of NULL or a tpm2_options structure.
  * This routine initializes said object.
  * @param short_opts
@@ -112,12 +134,14 @@ typedef bool (*tpm2_arg_handler)(int argc, char **argv);
  * @param on_arg
  *  An argument handling callback, which may be null if you don't wish
  *  to handle arguments.
+ * @param flags
+ *  TPM2_OPTIONS_* bit flags
  * @return
  *  NULL on failure or an initialized tpm2_options object.
  */
 tpm2_options *tpm2_options_new(const char *short_opts, size_t len,
         const struct option *long_opts, tpm2_option_handler on_opt,
-        tpm2_arg_handler on_arg);
+        tpm2_arg_handler on_arg, UINT32 flags);
 
 /**
  * Concatenates two tpm2_options objects, with src appended on
@@ -154,8 +178,6 @@ enum tpm2_option_code {
  *  The argc from main.
  * @param argv
  *  The argv from main.
- * @param envp
- *  The envp from main.
  * @param tool_opts
  *  The tool options gathered during onstart() lifecycle call.
  * @param flags
@@ -169,8 +191,18 @@ enum tpm2_option_code {
  *  Used by tpm2_tool, and likely should only be used there.
  *
  */
-tpm2_option_code tpm2_handle_options (int argc, char **argv, char **envp,
+tpm2_option_code tpm2_handle_options (int argc, char **argv,
         tpm2_options *tool_opts, tpm2_option_flags *flags,
         TSS2_TCTI_CONTEXT **tcti);
+
+/**
+ * Print usage summary for a given tpm2 tool.
+ *
+ * @param command
+ *  The command to print its usage summary text.
+ * @param tool_opts
+ *  The tpm2_options array that contains the tool options to print as a summary.
+ */
+void tpm2_print_usage(const char *command, struct tpm2_options *tool_opts);
 
 #endif /* OPTIONS_H */

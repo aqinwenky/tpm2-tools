@@ -33,7 +33,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
 #include "tpm2_alg_util.h"
 #include "tpm2_attr_util.h"
@@ -89,7 +89,7 @@ static bool nv_list(TSS2_SYS_CONTEXT *sapi_context) {
     TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_GetCapability(sapi_context, 0, TPM2_CAP_HANDLES,
             property, TPM2_PT_NV_INDEX_MAX, &moreData, &capabilityData, 0));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("GetCapability:Get NV Index list Error. TPM Error:0x%x", rval);
+        LOG_PERR(Tss2_Sys_GetCapability, rval);
         return false;
     }
 
@@ -100,9 +100,9 @@ static bool nv_list(TSS2_SYS_CONTEXT *sapi_context) {
         tpm2_tool_output("0x%x:\n", index);
 
         TPM2B_NV_PUBLIC nv_public = TPM2B_EMPTY_INIT;
-        rval = tpm2_util_nv_read_public(sapi_context, index, &nv_public);
-        if (rval != TPM2_RC_SUCCESS) {
-            LOG_ERR("Reading the public part of the nv index failed with: 0x%x", rval);
+        bool res = tpm2_util_nv_read_public(sapi_context, index, &nv_public);
+        if (!res) {
+            LOG_ERR("Failed to read the public part of NV index 0x%X", index);
             return false;
         }
         print_nv_public(&nv_public);

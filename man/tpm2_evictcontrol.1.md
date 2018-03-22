@@ -18,28 +18,39 @@ be evicted.
 # OPTIONS
 
   * **-A**, **--auth**=_AUTH_:
-    The authorization used to authorize the commands. Valid choices are:
-    *  **o** for **TPM_RH_OWNER**
-    *  **p** for **TPM_RH_PLATFORM**
+
+    The authorization hierarchy used to authorize the commands. Defaults to the "owner" hierarchy.
+    Supported options are:
+      * **o** for **TPM_RH_OWNER**
+      * **p** for **TPM_RH_PLATFORM**
+      * **`<num>`** where a raw number can be used.
 
   * **-H**, **--handle**=_HANDLE_:
+
     The handle of a loaded transient or a persistent object.
 
     If the handle is for a transient object, then a handle that will be assigned to the persisted
-    object must also be specified with the **-S** option.
+    object must also be specified with the **-p** option.
 
-    If the handle is for a persistent object, then the **-S** does not need to be provided since the
+    If the handle is for a persistent object, then the **-p** does not need to be provided since the
     handle must be the same for both options.
 
   * **-c**, **--context**=_OBJECT\_CONTEXT\_FILE_:
+
     Filename for object context.
 
-  * **-S**, **--persistent**=_PERSISTENT\_HANDLE_:
+  * **-p**, **--persistent**=_PERSISTENT\_HANDLE_:
+
     The persistent handle for the object handle specified via _HANDLE_.
 
   * **-P**, **--pwda**=_AUTH\_PASSWORD_:
-    authorization password, optional. Passwords should follow the
+
+    Optional authorization password. Passwords should follow the
     "password formatting standards, see section "Password Formatting".
+
+  * **-S**, **--session**=_SESSION\_FILE_:
+
+    Optional, A session file from **tpm2_startauthsession**(1)'s **-S** option.
 
 [common options](common/options.md)
 
@@ -59,11 +70,4 @@ tpm2_evictcontrol -A o -H 0x81010002 -S 0x81010002 -P 123abc
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
-
+[footer](common/footer.md)

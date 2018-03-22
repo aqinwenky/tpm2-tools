@@ -17,7 +17,7 @@ generator. The _SIZE_ parameter is expected as the only argument to the tool.
 
 # OPTIONS
 
-  * **-o**, **--output**=_FILE_
+  * **-o**, **--out-file**=_FILE_
     specifies the filename to output the raw bytes to. Defaults to stdout as a hex
     string.
 
@@ -43,11 +43,4 @@ tpm2_getrandom 8
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
-
+[footer](common/footer.md)

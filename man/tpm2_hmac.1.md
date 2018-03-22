@@ -34,11 +34,12 @@ _FILE_ is not specified, then data is read from stdin.
     Also, see section "Supported Hash Algorithms" for a list of supported hash
     algorithms.
 
-  * **-o**, **--outfile**=_OUT\_FILE_
+  * **-o**, **--out-file**=_OUT\_FILE_
     Optional file record of the HMAC result. Defaults to stdout.
 
-  * **-S**, **--input-session-handle**=_SESSION\_HANDLE_:
-    Optional Input session handle from a policy session for authorization.
+  * **-S**, **--session**=_SESSION\_FILE_:
+
+    Optional, A session file from **tpm2_startauthsession**(1)'s **-S** option.
 
 [common options](common/options.md)
 
@@ -64,6 +65,7 @@ tpm2_hmac -c key.context -P abc123 -g sha1 -o hash.out << data.in
 ```
 Perform a SHA256 HMAC on _stdin_ and send result and possibly ticket to stdout:
 
+```
 cat data.in | tpm2_hmac -k 0x81010002 -g sha256 -o hash.out
 ```
 
@@ -71,10 +73,4 @@ cat data.in | tpm2_hmac -k 0x81010002 -g sha256 -o hash.out
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
+[footer](common/footer.md)

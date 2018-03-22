@@ -33,11 +33,17 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
-#define TPM2_RC_MASK 0xfff
-#define TPM2_RC_GET(code) (code & TPM2_RC_MASK)
+#include "tpm2_error.h"
+
+#if defined (__GNUC__)
+#define COMPILER_ATTR(...) __attribute__((__VA_ARGS__))
+#else
+#define COMPILER_ATTR(...)
+#endif
 
 #define xstr(s) str(s)
 #define str(s) #s
@@ -48,20 +54,26 @@
 
 #define BUFFER_SIZE(type, field) (sizeof((((type *)NULL)->field)))
 
+#define TSS2_APP_RC_LAYER TSS2_RC_LAYER(5)
+
 #define TPM2B_TYPE_INIT(type, field) { .size = BUFFER_SIZE(type, field), }
 #define TPM2B_INIT(xsize) { .size = xsize, }
 #define TPM2B_EMPTY_INIT TPM2B_INIT(0)
 #define TPM2B_SENSITIVE_CREATE_EMPTY_INIT { \
            .sensitive = { \
-                .data.size = 0, \
-                .userAuth.size = 0, \
-            }, \
+                .data = {   \
+                    .size = 0 \
+                }, \
+                .userAuth = {   \
+                    .size = 0 \
+                } \
+            } \
     }
 
 #define TPMS_AUTH_COMMAND_INIT(session_handle) { \
         .sessionHandle = session_handle,\
 	    .nonce = TPM2B_EMPTY_INIT, \
-	    .sessionAttributes = 0, \
+	    .sessionAttributes = TPMA_SESSION_CONTINUESESSION, \
 	    .hmac = TPM2B_EMPTY_INIT \
     }
 
@@ -88,14 +100,9 @@
 		.digest = TPM2B_EMPTY_INIT \
     }
 
-#define TSS2_SYS_CMD_AUTHS_INIT(array) { \
-        .cmdAuthsCount = ARRAY_LEN(array), \
-        .cmdAuths = array, \
-    }
-
-#define TSS2_SYS_RSP_AUTHS_INIT(array) { \
-        .rspAuthsCount = ARRAY_LEN(array), \
-        .rspAuths = array, \
+#define TSS2L_SYS_AUTH_COMMAND_INIT(cnt, array) { \
+        .count = cnt, \
+        .auths = array, \
     }
 
 /*
@@ -107,9 +114,14 @@
         TSS2_RC __result = 0;                              \
         do {                                               \
             __result = (expression);                       \
-        } while (TPM2_RC_GET(__result) == TPM2_RC_RETRY); \
+        } while (tpm2_error_get(__result) == TPM2_RC_RETRY); \
         __result;                                          \
     })
+
+typedef struct {
+    UINT16 size;
+    BYTE buffer[0];
+} TPM2B;
 
 int tpm2_util_hex_to_byte_structure(const char *inStr, UINT16 *byteLenth, BYTE *byteBuffer);
 
@@ -154,11 +166,23 @@ bool tpm2_util_string_to_uint16(const char *str, uint16_t *value);
  *  The data to print.
  * @param len
  *  The length of the data.
- * @param plain
- *  true for a plain hex string false for an xxd compatable
- *  dump.
  */
-void tpm2_util_hexdump(BYTE *data, size_t len, bool plain);
+void tpm2_util_hexdump(const BYTE *data, size_t len);
+
+/**
+ * Prints a file as a hex string to stdout if quiet mode
+ * is not enabled.
+ * ie no -Q option.
+ *
+ * @param fd
+ *  A readable open file.
+ * @param len
+ *  The length of the data to read and print.
+ * @return
+ *  true if len bytes were successfully read and printed,
+ *  false otherwise
+ */
+bool tpm2_util_hexdump_file(FILE *fd, size_t len);
 
 /**
  * Prints a TPM2B as a hex dump.
@@ -166,20 +190,15 @@ void tpm2_util_hexdump(BYTE *data, size_t len, bool plain);
  */
 static inline void tpm2_util_print_tpm2b(TPM2B *buffer) {
 
-    return tpm2_util_hexdump(buffer->buffer, buffer->size, true);
+    return tpm2_util_hexdump(buffer->buffer, buffer->size);
 }
 
 /**
- * Copies a tpm2b from dest to src and clears dest if src is NULL.
- * If src is NULL, it is a NOP.
- * @param dest
- *  The destination TPM2B
- * @param src
- *  The source TPM2B
- * @return
- *  The number of bytes copied.
+ * Reads a TPM2B object from FILE* and prints data in hex.
+ * @param fd
+ *  A readable open file.
  */
-UINT16 tpm2_util_copy_tpm2b(TPM2B *dest, TPM2B *src);
+bool tpm2_util_print_tpm2b_file(FILE *fd);
 
 /**
  * Checks if the host is big endian
@@ -255,10 +274,25 @@ UINT64 tpm2_util_ntoh_64(UINT64 data);
 UINT32 tpm2_util_pop_count(UINT32 data);
 
 /**
+ * Prints whitespace indention for yaml output.
+ * @param indent_count
+ *  Number of times to indent
+ */
+void print_yaml_indent(size_t indent_count);
+
+/**
  * Convert a TPM2B_PUBLIC into a yaml format and output if not quiet.
  * @param public
  *  The TPM2B_PUBLIC to output in YAML format.
  */
 void tpm2_util_public_to_yaml(TPM2B_PUBLIC *public);
+
+
+/**
+ * Convert a TPMA_OBJECT to a yaml format and output if not quiet.
+ * @param obj
+ *  The TPMA_OBJECT attributes to print.
+ */
+void tpm2_util_tpma_object_to_yaml(TPMA_OBJECT obj);
 
 #endif /* STRING_BYTES_H */

@@ -33,9 +33,10 @@
 #include <setjmp.h>
 #include <cmocka.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
 #include "tpm2_errata.h"
+#include "tpm2_tool.h"
 #include "tpm2_util.h"
 
 static inline void setcaps(UINT32 level, UINT32 rev, UINT32 day, UINT32 year, TSS2_RC rc) {
@@ -49,9 +50,9 @@ static inline void setcaps(UINT32 level, UINT32 rev, UINT32 day, UINT32 year, TS
 }
 
 TSS2_RC __wrap_Tss2_Sys_GetCapability(TSS2_SYS_CONTEXT *sysContext,
-        TSS2_SYS_CMD_AUTHS const *cmdAuthsArray, TPM2_CAP capability,
+        TSS2L_SYS_AUTH_COMMAND const *cmdAuthsArray, TPM2_CAP capability,
         UINT32 property, UINT32 propertyCount, TPMI_YES_NO *moreData,
-        TPMS_CAPABILITY_DATA *capabilityData, TSS2_SYS_RSP_AUTHS *rspAuthsArray) {
+        TPMS_CAPABILITY_DATA *capabilityData, TSS2L_SYS_AUTH_RESPONSE *rspAuthsArray) {
 
     UNUSED(sysContext);
     UNUSED(cmdAuthsArray);
@@ -91,13 +92,13 @@ TSS2_RC __wrap_Tss2_Sys_GetCapability(TSS2_SYS_CONTEXT *sysContext,
 static void test_tpm2_errata_no_init_and_apply(void **state) {
     UNUSED(state);
 
-    TPM2B_PUBLIC in_public = TPM2B_PUBLIC_INIT(TPMA_OBJECT_SIGN);
+    TPM2B_PUBLIC in_public = TPM2B_PUBLIC_INIT(TPMA_OBJECT_SIGN_ENCRYPT);
 
     tpm2_errata_fixup(SPEC_116_ERRATA_2_7,
                       &in_public.publicArea.objectAttributes);
 
-    assert_int_equal(in_public.publicArea.objectAttributes & TPMA_OBJECT_SIGN,
-                    TPMA_OBJECT_SIGN);
+    assert_int_equal(in_public.publicArea.objectAttributes & TPMA_OBJECT_SIGN_ENCRYPT,
+                    TPMA_OBJECT_SIGN_ENCRYPT);
 }
 
 static void test_tpm2_errata_bad_init_and_apply(void **state) {
@@ -107,13 +108,13 @@ static void test_tpm2_errata_bad_init_and_apply(void **state) {
     tpm2_errata_init((TSS2_SYS_CONTEXT *) 0xDEADBEEF);
 
 
-    TPM2B_PUBLIC in_public = TPM2B_PUBLIC_INIT(TPMA_OBJECT_SIGN);
+    TPM2B_PUBLIC in_public = TPM2B_PUBLIC_INIT(TPMA_OBJECT_SIGN_ENCRYPT);
 
     tpm2_errata_fixup(SPEC_116_ERRATA_2_7,
                       &in_public.publicArea.objectAttributes);
 
-    assert_int_equal(in_public.publicArea.objectAttributes & TPMA_OBJECT_SIGN,
-                    TPMA_OBJECT_SIGN);
+    assert_int_equal(in_public.publicArea.objectAttributes & TPMA_OBJECT_SIGN_ENCRYPT,
+                    TPMA_OBJECT_SIGN_ENCRYPT);
 }
 
 static void test_tpm2_errata_init_good_and_apply(void **state) {
@@ -122,12 +123,12 @@ static void test_tpm2_errata_init_good_and_apply(void **state) {
     setcaps(00, 116, 303, 2014, TPM2_RC_SUCCESS);
     tpm2_errata_init((TSS2_SYS_CONTEXT *) 0xDEADBEEF);
 
-    TPM2B_PUBLIC in_public = TPM2B_PUBLIC_INIT(TPMA_OBJECT_SIGN);
+    TPM2B_PUBLIC in_public = TPM2B_PUBLIC_INIT(TPMA_OBJECT_SIGN_ENCRYPT);
 
     tpm2_errata_fixup(SPEC_116_ERRATA_2_7,
                       &in_public.publicArea.objectAttributes);
 
-    assert_int_equal(in_public.publicArea.objectAttributes & TPMA_OBJECT_SIGN,
+    assert_int_equal(in_public.publicArea.objectAttributes & TPMA_OBJECT_SIGN_ENCRYPT,
                      0);
 }
 
@@ -138,13 +139,13 @@ static void test_tpm2_errata_init_good_and_no_match(void **state) {
     //Tss2_Sys_GetCapability
     tpm2_errata_init((TSS2_SYS_CONTEXT *) 0xDEADBEEF);
 
-    TPM2B_PUBLIC in_public = TPM2B_PUBLIC_INIT(TPMA_OBJECT_SIGN);
+    TPM2B_PUBLIC in_public = TPM2B_PUBLIC_INIT(TPMA_OBJECT_SIGN_ENCRYPT);
 
     tpm2_errata_fixup(SPEC_116_ERRATA_2_7,
                       &in_public.publicArea.objectAttributes);
 
-    assert_int_equal(in_public.publicArea.objectAttributes & TPMA_OBJECT_SIGN,
-                    TPMA_OBJECT_SIGN);
+    assert_int_equal(in_public.publicArea.objectAttributes & TPMA_OBJECT_SIGN_ENCRYPT,
+                    TPMA_OBJECT_SIGN_ENCRYPT);
 }
 
 static void test_tpm2_errata_init_no_match_and_apply(void **state) {
@@ -155,13 +156,13 @@ static void test_tpm2_errata_init_no_match_and_apply(void **state) {
     //Tss2_Sys_GetCapability
     tpm2_errata_init((TSS2_SYS_CONTEXT *) 0xDEADBEEF);
 
-    TPM2B_PUBLIC in_public = TPM2B_PUBLIC_INIT(TPMA_OBJECT_SIGN);
+    TPM2B_PUBLIC in_public = TPM2B_PUBLIC_INIT(TPMA_OBJECT_SIGN_ENCRYPT);
 
     tpm2_errata_fixup(SPEC_116_ERRATA_2_7,
                       &in_public.publicArea.objectAttributes);
 
-    assert_int_equal(in_public.publicArea.objectAttributes & TPMA_OBJECT_SIGN,
-                    TPMA_OBJECT_SIGN);
+    assert_int_equal(in_public.publicArea.objectAttributes & TPMA_OBJECT_SIGN_ENCRYPT,
+                    TPMA_OBJECT_SIGN_ENCRYPT);
 }
 
 int main(int argc, char *argv[]) {

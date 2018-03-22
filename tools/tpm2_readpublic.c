@@ -33,9 +33,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
-#include "conversion.h"
+#include "tpm2_convert.h"
 #include "files.h"
 #include "log.h"
 #include "tpm2_alg_util.h"
@@ -54,7 +54,7 @@ struct tpm_readpub_ctx {
     TPMI_DH_OBJECT objectHandle;
     char *outFilePath;
     char *context_file;
-    pubkey_format format;
+    tpm2_convert_pubkey_fmt format;
 };
 
 static tpm_readpub_ctx ctx = {
@@ -63,9 +63,7 @@ static tpm_readpub_ctx ctx = {
 
 static int read_public_and_save(TSS2_SYS_CONTEXT *sapi_context) {
 
-    TPMS_AUTH_RESPONSE session_out_data;
-    TSS2_SYS_RSP_AUTHS sessions_out_data;
-    TPMS_AUTH_RESPONSE *session_out_data_array[1];
+    TSS2L_SYS_AUTH_RESPONSE sessions_out_data;
 
     TPM2B_PUBLIC public = TPM2B_EMPTY_INIT;
 
@@ -73,14 +71,10 @@ static int read_public_and_save(TSS2_SYS_CONTEXT *sapi_context) {
 
     TPM2B_NAME qualified_name = TPM2B_TYPE_INIT(TPM2B_NAME, name);
 
-    session_out_data_array[0] = &session_out_data;
-    sessions_out_data.rspAuths = &session_out_data_array[0];
-    sessions_out_data.rspAuthsCount = ARRAY_LEN(session_out_data_array);
-
     TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_ReadPublic(sapi_context, ctx.objectHandle, 0,
             &public, &name, &qualified_name, &sessions_out_data));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("TPM2_ReadPublic error: rval = 0x%0x", rval);
+        LOG_PERR(Tss2_Sys_ReadPublic, rval);
         return false;
     }
 
@@ -100,7 +94,7 @@ static int read_public_and_save(TSS2_SYS_CONTEXT *sapi_context) {
     tpm2_util_public_to_yaml(&public);
 
     return ctx.outFilePath ?
-            tpm2_convert_pubkey(&public, ctx.format, ctx.outFilePath) : true;
+            tpm2_convert_pubkey_save(&public, ctx.format, ctx.outFilePath) : true;
 }
 
 static bool on_option(char key, char *value) {
@@ -115,14 +109,14 @@ static bool on_option(char key, char *value) {
         ctx.flags.H = 1;
         break;
     case 'o':
-        ctx.outFilePath = optarg;
+        ctx.outFilePath = value;
         break;
     case 'c':
-        ctx.context_file = optarg;
+        ctx.context_file = value;
         ctx.flags.c = 1;
         break;
     case 'f':
-        ctx.format = tpm2_parse_pubkey_format(optarg);
+        ctx.format = tpm2_convert_pubkey_fmt_from_optarg(value);
         if (ctx.format == pubkey_format_err) {
             return false;
         }
@@ -136,14 +130,14 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     static const struct option topts[] = {
-        { "object",        required_argument, NULL,'H' },
-        { "opu",           required_argument, NULL,'o' },
-        { "context-object", required_argument, NULL,'c' },
-        { "format",        required_argument, NULL,'f' }
+        { "object",         required_argument, NULL, 'H' },
+        { "out-file",       required_argument, NULL, 'o' },
+        { "context-object", required_argument, NULL, 'c' },
+        { "format",         required_argument, NULL, 'f' }
     };
 
     *opts = tpm2_options_new("H:o:c:f:", ARRAY_LEN(topts), topts,
-            on_option, NULL);
+                             on_option, NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }
@@ -155,7 +149,7 @@ static bool init(TSS2_SYS_CONTEXT *sapi_context) {
     }
 
     if (ctx.flags.c) {
-        bool result = files_load_tpm_context_from_file(sapi_context, &ctx.objectHandle,
+        bool result = files_load_tpm_context_from_path(sapi_context, &ctx.objectHandle,
                 ctx.context_file);
         if (!result) {
             return false;

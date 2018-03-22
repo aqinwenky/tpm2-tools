@@ -35,7 +35,7 @@
 #include <string.h>
 
 #include <limits.h>
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
 #include "tpm2_options.h"
 #include "log.h"
@@ -59,16 +59,16 @@ static bool get_random_and_save(TSS2_SYS_CONTEXT *sapi_context) {
     TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_GetRandom(sapi_context, NULL, ctx.num_of_bytes,
             &random_bytes, NULL));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("TPM2_GetRandom Error. TPM Error:0x%x", rval);
+        LOG_PERR(Tss2_Sys_GetRandom, rval);
         return false;
     }
 
     if (!ctx.output_file_specified) {
         UINT16 i;
         for (i = 0; i < random_bytes.size; i++) {
-            printf("%s0x%2.2X", i ? " " : "", random_bytes.buffer[i]);
+            tpm2_tool_output("%s0x%2.2X", i ? " " : "", random_bytes.buffer[i]);
         }
-        printf("\n");
+        tpm2_tool_output("\n");
         return true;
     }
 
@@ -106,10 +106,11 @@ static bool on_args(int argc, char **argv) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     const struct option topts[] = {
-        { "output",   required_argument, NULL, 'o' },
+        { "out-file",   required_argument, NULL, 'o' },
     };
 
-    *opts = tpm2_options_new("o:", ARRAY_LEN(topts), topts, on_option, on_args);
+    *opts = tpm2_options_new("o:", ARRAY_LEN(topts), topts, on_option, on_args,
+                             TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }

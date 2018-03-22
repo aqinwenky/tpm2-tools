@@ -32,42 +32,19 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <getopt.h>
 #include <unistd.h>
 
+#include <sys/types.h>
+#include <sys/wait.h>
+
 #include "log.h"
 #include "tpm2_options.h"
+#include "tpm2_tcti_ldr.h"
 #include "tpm2_util.h"
-
-#ifdef HAVE_TCTI_DEV
-#include "tpm2_tools_tcti_device.h"
-#endif
-#ifdef HAVE_TCTI_SOCK
-#include "tpm2_tools_tcti_socket.h"
-#endif
-#ifdef HAVE_TCTI_TABRMD
-#include "tpm2_tools_tcti_abrmd.h"
-#endif
-
-/*
- * Default TCTI: this is a bit awkward since we allow users to enable /
- * disable TCTIs using ./configure --with/--without magic.
- * As simply put as possible:
- * if the tabrmd TCTI is enabled, it's the default.
- * else if the socket TCTI is enabled it's the default.
- * else if the device TCTI is enabled it's the default.
- * We do this to preserve the current default / expected behavior (use of
- * the socket TCTI).
- */
-#ifdef HAVE_TCTI_TABRMD
-  #define TCTI_DEFAULT_STR  "abrmd"
-#elif HAVE_TCTI_SOCK
-  #define TCTI_DEFAULT_STR  "socket"
-#elif  HAVE_TCTI_DEV
-  #define TCTI_DEFAULT_STR  "device"
-#endif
 
 #ifndef VERSION
   #warning "VERSION Not known at compile time, not embedding..."
@@ -75,20 +52,11 @@
 #endif
 
 #define TPM2TOOLS_ENV_TCTI_NAME      "TPM2TOOLS_TCTI_NAME"
-
-struct tpm2_options {
-    struct {
-        tpm2_option_handler on_opt;
-        tpm2_arg_handler on_arg;
-    } callbacks;
-    char *short_opts;
-    size_t len;
-    struct option long_opts[];
-};
+#define TPM2TOOLS_ENV_ENABLE_ERRATA  "TPM2TOOLS_ENABLE_ERRATA"
 
 tpm2_options *tpm2_options_new(const char *short_opts, size_t len,
         const struct option *long_opts, tpm2_option_handler on_opt,
-        tpm2_arg_handler on_arg) {
+        tpm2_arg_handler on_arg, UINT32 flags) {
 
     tpm2_options *opts = calloc(1, sizeof(*opts) + (sizeof(*long_opts) * len));
     if (!opts) {
@@ -114,6 +82,7 @@ tpm2_options *tpm2_options_new(const char *short_opts, size_t len,
     opts->callbacks.on_opt = on_opt;
     opts->callbacks.on_arg = on_arg;
     opts->len = len;
+    opts->flags = flags;
     memcpy(opts->long_opts, long_opts, len * sizeof(*long_opts));
 
     return opts;
@@ -148,6 +117,7 @@ bool tpm2_options_cat(tpm2_options **dest, tpm2_options *src) {
 
     d->callbacks.on_arg = src->callbacks.on_arg;
     d->callbacks.on_opt = src->callbacks.on_opt;
+    d->flags = src->flags;
 
     memcpy(&d->long_opts[d->len], src->long_opts, src->len * sizeof(src->long_opts[0]));
 
@@ -164,115 +134,164 @@ void tpm2_options_free(tpm2_options *opts) {
     free(opts->short_opts);
     free(opts);
 }
-
-#define ADD_TCTI(xname, xinit) { .name = xname, .init = xinit }
-
-/*
- * map a string "nice" name of a tcti to a tcti initialization
- * routine.
- */
-struct {
-    char       *name;
-    tcti_init   init;
-} tcti_map_table[] = {
-#ifdef HAVE_TCTI_DEV
-    ADD_TCTI("device", tpm2_tools_tcti_device_init),
-#endif
-#ifdef HAVE_TCTI_SOCK
-    ADD_TCTI("socket", tpm2_tools_tcti_socket_init),
-#endif
-#ifdef HAVE_TCTI_TABRMD
-    ADD_TCTI("abrmd", tpm2_tools_tcti_abrmd_init)
-#endif
+typedef struct tcti_conf tcti_conf;
+struct tcti_conf {
+    const char *name;
+    const char *opts;
 };
 
-static char *tcti_get_opts(char *optstr) {
+static inline const char *fixup_name(const char *name) {
+
+    return !strcmp(name, "abrmd") ? "tabrmd" : name;
+}
+
+static tcti_conf tcti_get_config(const char *optstr) {
+
+    /* set up the default configuration */
+    tcti_conf conf = {
+        .name = "tabrmd"
+    };
+
+    /* no tcti config supplied, get it from env */
+    if (!optstr) {
+        optstr = getenv (TPM2TOOLS_ENV_TCTI_NAME);
+        if (!optstr) {
+            /* nothing user supplied, use default */
+            return conf;
+        }
+    }
 
     char *split = strchr(optstr, ':');
     if (!split) {
-        return NULL;
+        /* --tcti=device */
+        conf.name = fixup_name(optstr);
+        return conf;
     }
+
+    /*
+     * If it has a ":", it could be either one of the following:
+     * case A: --tcti=:               --> default name and default (null) config
+     * case B: --tcti=:/dev/foo       --> default name, custom config
+     * case C: --tcti=device:         --> custom name, default (null) config
+     * case D: --tcti=device:/dev/foo --> custom name, custom config
+     */
 
     split[0] = '\0';
 
-    /*
-     * make it so downstream consumers don't need to deal with the empty
-     * string, ie "". They can just check NULL.
-     */
-    if (!split[1]) {
-        return NULL;
+    /* Case A */
+    if (!optstr[0] && !split[1]) {
+        return conf;
     }
 
-    return &split[1];
+    /* Case B */
+    if (!optstr[0]) {
+        conf.opts = &split[1];
+        return conf;
+    }
+
+    /* Case C */
+    if (!split[1]) {
+        conf.name = fixup_name(optstr);
+        return conf;
+    }
+
+    /* Case D */
+    conf.name = fixup_name(optstr);
+    conf.opts = &split[1];
+    return conf;
 }
 
-static void execute_man (char *prog_name, char *envp[]) {
+static bool execute_man(char *prog_name) {
 
-    char *manpage = basename(prog_name);
-    char *argv[] = {
-        "/man", // ARGv[0] needs to be something.
-        manpage,
-        NULL
-    };
-    execvpe ("man", argv, envp);
-    LOG_ERR("Could not execute \"man %s\" error: %s", manpage,
-            strerror(errno));
+    pid_t  pid;
+    int status;
+
+    if ((pid = fork()) < 0) {
+        LOG_ERR("Could not fork process to execute man, error: %s",
+                strerror(errno));
+        return false;
+    }
+
+    if (pid == 0) {
+        char *manpage = basename(prog_name);
+        execlp("man", "man", manpage, NULL);
+    } else {
+        if ((pid = waitpid(pid, &status, 0)) == -1) {
+            LOG_ERR("Waiting for child process that executes man failed, error: %s",
+                    strerror(errno));
+            return false;
+        }
+
+        return WEXITSTATUS(status) == 0;
+    }
+
+    return true;
 }
 
 static void show_version (const char *name) {
-    #ifdef HAVE_TCTI_TABRMD
-      #define TCTI_TABRMD_CONF "tabrmd,"
-    #else
-      #define TCTI_TABRMD_CONF ""
-    #endif
-
-    #ifdef HAVE_TCTI_SOCK
-      #define TCTI_SOCK_CONF "socket,"
-    #else
-      #define TCTI_SOCK_CONF ""
-    #endif
-
-    #ifdef HAVE_TCTI_DEV
-      #define TCTI_DEV_CONF "device,"
-    #else
-      #define TCTI_DEV_CONF ""
-    #endif
-
-    static const char *tcti_conf = TCTI_TABRMD_CONF TCTI_SOCK_CONF TCTI_DEV_CONF;
-    printf("tool=\"%s\" version=\"%s\" tctis=\"%s\"\n", name, VERSION,
-            tcti_conf);
+#ifndef DISABLE_DLCLOSE
+    printf("tool=\"%s\" version=\"%s\" tctis=\"dynamic\"\n", name, VERSION);
+#else
+    printf("tool=\"%s\" version=\"%s\" tctis=\"dynamic\" dlclose=disabled\n",
+            name, VERSION);
+#endif
 }
 
-tpm2_option_code tpm2_handle_options (int argc, char **argv, char **envp,
+void tpm2_print_usage(const char *command, struct tpm2_options *tool_opts) {
+    unsigned int i;
+
+    if (!tool_opts || !(tool_opts->flags & TPM2_OPTIONS_SHOW_USAGE)) {
+        return;
+    }
+
+    printf("usage: %s%s%s\n", command,
+           tool_opts->callbacks.on_opt ? " [OPTIONS]" : "",
+           tool_opts->callbacks.on_arg ? " ARGUMENTS" : "");
+
+    if (tool_opts->callbacks.on_opt) {
+        for (i = 0; i < tool_opts->len; i++) {
+            struct option *opt = &tool_opts->long_opts[i];
+            printf("[ -%c | --%s%s]", opt->val, opt->name,
+                   opt->has_arg ? "=VALUE" : "");
+            if ((i + 1) % 4 == 0) {
+                printf("\n");
+            } else {
+                printf(" ");
+            }
+        }
+        if (i % 4 != 0) {
+            printf("\n");
+        }
+    }
+}
+
+tpm2_option_code tpm2_handle_options (int argc, char **argv,
         tpm2_options *tool_opts, tpm2_option_flags *flags,
         TSS2_TCTI_CONTEXT **tcti) {
 
     tpm2_option_code rc = tpm2_option_code_err;
     bool result = false;
-
-    UNUSED(envp);
+    bool show_help = false;
 
     /*
      * Handy way to *try* and find all used options:
      * grep -rn case\ \'[a-zA-Z]\' | awk '{print $3}' | sed s/\'//g | sed s/\://g | sort | uniq | less
      */
     struct option long_options [] = {
-        { "tcti",           required_argument, NULL, 'T' },
-        { "help",           no_argument,       NULL, 'h' },
-        { "verbose",        no_argument,       NULL, 'v' },
-        { "quiet",          no_argument,       NULL, 'Q' },
-        { "version",        no_argument,       NULL, 'V' },
-        { "enable-errata", no_argument,        NULL, 'Z' },
+        { "tcti",          required_argument, NULL, 'T' },
+        { "help",          no_argument,       NULL, 'h' },
+        { "verbose",       no_argument,       NULL, 'v' },
+        { "quiet",         no_argument,       NULL, 'Q' },
+        { "version",       no_argument,       NULL, 'V' },
+        { "enable-errata", no_argument,       NULL, 'Z' },
     };
 
-    char *tcti_opts = NULL;
-    char *tcti_name = TCTI_DEFAULT_STR;
-    char *env_str = getenv (TPM2TOOLS_ENV_TCTI_NAME);
-    tcti_name = env_str ? env_str : tcti_name;
+    const char *tcti_conf_option = NULL;
 
     /* handle any options */
-    tpm2_options *opts = tpm2_options_new("T:hvVQZ",
-            ARRAY_LEN(long_options), long_options, NULL, NULL);
+    const char* common_short_opts = "T:hvVQZ";
+    tpm2_options *opts = tpm2_options_new(common_short_opts,
+            ARRAY_LEN(long_options), long_options, NULL, NULL, true);
     if (!opts) {
         return tpm2_option_code_err;
     }
@@ -292,15 +311,16 @@ tpm2_option_code tpm2_handle_options (int argc, char **argv, char **envp,
     {
         switch (c) {
         case 'T':
+            if (opts->flags & TPM2_OPTIONS_NO_SAPI) {
+                LOG_ERR("%s: tool doesn't support the TCTI option", argv[0]);
+                goto out;
+            }
             /* only attempt to get options from tcti option string */
-            tcti_name = optarg;
-            tcti_opts = tcti_get_opts(optarg);
+            tcti_conf_option = optarg;
             break;
         case 'h':
-            execute_man(argv[0], envp);
-            result = false;
-            goto out;
-            break;
+            show_help = true;
+        break;
         case 'V':
             flags->verbose = 1;
             break;
@@ -315,16 +335,11 @@ tpm2_option_code tpm2_handle_options (int argc, char **argv, char **envp,
         case 'Z':
             flags->enable_errata = 1;
             break;
-        case ':':
-            LOG_ERR("Argument %c needs a value!", optopt);
-            goto out;
         case '?':
-            LOG_ERR("Unknown Argument: %c", optopt);
-            result = false;
             goto out;
         default:
             /* NULL on_opt handler and unkown option specified is an error */
-            if (!tool_opts->callbacks.on_opt) {
+            if (!tool_opts || !tool_opts->callbacks.on_opt) {
                 LOG_ERR("Unknown options found: %c", c);
                 goto out;
             }
@@ -338,43 +353,50 @@ tpm2_option_code tpm2_handle_options (int argc, char **argv, char **envp,
     char **tool_args = &argv[optind];
     int tool_argc = argc - optind;
 
+    /* have args and no handler, error condition */
+    if (tool_argc && (!tool_opts || !tool_opts->callbacks.on_arg)) {
+        LOG_ERR("Got arguments but the tool takes no arguments");
+        goto out;
+    }
     /* have args and a handler to process */
-    if (tool_argc && tool_opts->callbacks.on_arg) {
+    else if (tool_argc && tool_opts->callbacks.on_arg) {
         result = tool_opts->callbacks.on_arg(tool_argc, tool_args);
         if (!result) {
             goto out;
         }
-    /* have args and no handler, error condition */
-    } else if (tool_argc && !tool_opts->callbacks.on_arg) {
-        LOG_ERR("Got arguments but the tool takes no arguments");
-        goto out;
-    }
+	}
 
-    size_t i;
-    bool found = false;
-    for(i=0; i < ARRAY_LEN(tcti_map_table); i++) {
+    /* Only init a TCTI if the tool needs it */
+    if (!tool_opts || !(tool_opts->flags & TPM2_OPTIONS_NO_SAPI)) {
+        tcti_conf conf = tcti_get_config(tcti_conf_option);
 
-        char *name = tcti_map_table[i].name;
-        tcti_init init = tcti_map_table[i].init;
-        if (!strcmp(tcti_name, name)) {
-            found = true;
-            *tcti = init(tcti_opts);
-            if (!*tcti) {
-                result = false;
-                goto out;
-            }
+        *tcti = tpm2_tcti_ldr_load(conf.name, conf.opts);
+        if (!*tcti) {
+            LOG_ERR("Could not load tcti, got: \"%s\"", conf.name);
+            goto out;
+        }
+
+        if (!flags->enable_errata) {
+            flags->enable_errata = !!getenv (TPM2TOOLS_ENV_ENABLE_ERRATA);
         }
     }
 
-    if (!found) {
-        LOG_ERR("Unknown tcti, got: \"%s\"", tcti_name);
-        result = false;
-        goto out;
+    rc = tpm2_option_code_continue;
+out:
+
+    if (show_help) {
+        bool did_manpager = execute_man(argv[0]);
+        if (!did_manpager) {
+            tpm2_print_usage(argv[0], tool_opts);
+        }
+
+        const TSS2_TCTI_INFO *info = tpm2_tcti_ldr_getinfo();
+        if (info) {
+            printf("\ntcti-help: %s\n", info->config_help);
+        }
+        rc = tpm2_option_code_stop;
     }
 
-    rc = tpm2_option_code_continue;
-
-out:
     tpm2_options_free(opts);
 
     return rc;

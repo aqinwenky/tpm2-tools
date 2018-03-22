@@ -32,11 +32,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
 #include "files.h"
 #include "log.h"
-#include "tpm_hash.h"
+#include "tpm2_hash.h"
 #include "tpm2_alg_util.h"
 #include "tpm2_util.h"
 
@@ -351,7 +351,7 @@ UINT8* tpm2_extract_plain_signature(UINT16 *size, TPMT_SIGNATURE *signature) {
         if (!buffer) {
             goto nomem;
         }
-        memcpy(buffer, &hmac_sig, *size);
+        memcpy(buffer, hmac_sig, *size);
         break;
     }
     case TPM2_ALG_ECDSA: {
@@ -386,16 +386,7 @@ nomem:
 static bool get_key_type(TSS2_SYS_CONTEXT *sapi_context, TPMI_DH_OBJECT objectHandle,
         TPMI_ALG_PUBLIC *type) {
 
-    TPMS_AUTH_RESPONSE session_data_out;
-
-    TPMS_AUTH_RESPONSE *session_data_out_array[1] = {
-            &session_data_out
-    };
-
-    TSS2_SYS_RSP_AUTHS sessions_data_out = {
-            1,
-            &session_data_out_array[0]
-    };
+    TSS2L_SYS_AUTH_RESPONSE sessions_data_out;
 
     TPM2B_PUBLIC out_public = TPM2B_EMPTY_INIT;
 

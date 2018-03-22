@@ -39,8 +39,9 @@ into the TPM.
   * **-C**, **--context**=_CONTEXT\_FILE_:
     An optional file to save the object context to.
 
-  * **-S**, **--input-session-handle**=_SESSION\_HANDLE_:
-    Optional Input session handle from a policy session for authorization.
+  * **-S**, **--session**=_SESSION\_FILE_:
+
+    Optional, A session file from **tpm2_startauthsession**(1)'s **-S** option.
 
 [common options](common/options.md)
 
@@ -62,10 +63,4 @@ tpm2_load  -H 0x80000000 -P "hex:123abc" -u <pubKeyFileName> -r <privKeyFileName
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
+[footer](common/footer.md)

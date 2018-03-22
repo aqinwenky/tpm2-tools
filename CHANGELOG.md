@@ -1,6 +1,30 @@
 ## Changelog
-
 ### next
+  * tpm2_createak: support for non-persistent AK generation.
+  * tpm2_createek: support for non-persistent EK generation.
+  * tpm2_getpubak renamed to tpm2_createak, -f becomes -p and -f is used for format of public key
+    output.
+  * tpm2_getpubek renamed to tpm2_createek, -f becomes -p and -f is used for format of public key
+    output.
+  * Libre SSL builds fixed.
+  * Dynamic TCTIS. Support for pluggable TCTI modules via the -T or --tcti options.
+  * tpm2_sign: supports signing a pre-computed hash via -D
+  * tpm2_clearlock: tool added
+  * test: system testing scripts moved into subordiante test directory.
+  * fix a buffer overflow in nvread/write tools.
+  * configure: enable code coverage option.
+  * tpm2_takeownership: split into tpm2_clear and tpm2_changeauth
+  * env: add TPM2TOOLS_ENABLE_ERRATA to control the -Z or errata option.
+
+### 3.0.2 - 2017-12-18
+  * configure: enable code coverage option.
+  * build: enable silent rules options.
+  * Add system tests to dist tarball.
+  * tpm2_nv(read|write): fix buffer overflows.
+
+### 3.0.1 - 2017-12-11
+  * Makefile: add missing LICENSE and markdown files.
+### 3.0 - 2017-12-08
   * tpm2_getmanufec: -O as a flag for -f has changed. -O is for existing EK public structure
       and -f is only for generated EK public output.
   * tpm2_nvlist: output in yaml format.
@@ -23,7 +47,6 @@
     argument vs using -i.
   * tpm2_dump_capability: outputs human readable command codes.
   * camelCase options are now all lower case. For example, --camelCase becomes --camel-case.
-  * tpm2_import - A new tool for importing external entities, very limited key support.
   * tpm2_quote,readpublic, and sign now have support for pem/der output/inputs. See the
     respective man pages for more details.
   * tpm2_nvread: Has an output file option, -f.
@@ -62,7 +85,7 @@
 
 ### v2.0 - 2017-03-29
 
-  * Tracked on the milestone: https://github.com/01org/tpm2-tools/milestone/2
+  * Tracked on the milestone: https://github.com/tpm2-software/tpm2-tools/milestone/2
   * Reworked all the tools to support configurable TCTIs, based on build time
     configuration, one can specify the tcti via the --tcti (-T) option to all
     tools.

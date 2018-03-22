@@ -35,9 +35,9 @@
 #include <string.h>
 
 #include <limits.h>
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
-#include "conversion.h"
+#include "tpm2_convert.h"
 #include "tpm2_options.h"
 #include "tpm2_password_util.h"
 #include "tpm2_util.h"
@@ -74,7 +74,7 @@ struct tpm_certify_ctx {
     } flags;
     char *context_file;
     char *context_key_file;
-    signature_format sig_fmt;
+    tpm2_convert_sig_fmt sig_fmt;
 };
 
 static tpm_certify_ctx ctx = {
@@ -86,16 +86,7 @@ static tpm_certify_ctx ctx = {
 };
 
 static bool get_key_type(TSS2_SYS_CONTEXT *sapi_context, TPMI_DH_OBJECT object_handle, TPMI_ALG_PUBLIC *type) {
-
-    TPMS_AUTH_RESPONSE session_data_out;
-    TPMS_AUTH_RESPONSE *session_data_out_array[] = {
-        &session_data_out
-    };
-
-    TSS2_SYS_RSP_AUTHS sessions_data_out = {
-            .rspAuthsCount = ARRAY_LEN(session_data_out_array),
-            .rspAuths = session_data_out_array
-    };
+    TSS2L_SYS_AUTH_RESPONSE sessions_data_out;
 
     TPM2B_PUBLIC out_public = TPM2B_EMPTY_INIT;
 
@@ -106,7 +97,7 @@ static bool get_key_type(TSS2_SYS_CONTEXT *sapi_context, TPMI_DH_OBJECT object_h
     TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_ReadPublic(sapi_context, object_handle, 0,
             &out_public, &name, &qualified_name, &sessions_data_out));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("TPM2_ReadPublic failed. Error Code: 0x%x", rval);
+        LOG_PERR(Tss2_Sys_ReadPublic, rval);
         return false;
     }
 
@@ -148,26 +139,12 @@ static bool set_scheme(TSS2_SYS_CONTEXT *sapi_context, TPMI_DH_OBJECT key_handle
 
 static bool certify_and_save_data(TSS2_SYS_CONTEXT *sapi_context) {
 
-    TPMS_AUTH_COMMAND *cmd_session_array[ARRAY_LEN(ctx.cmd_auth)] = {
-        &ctx.cmd_auth[0],
-        &ctx.cmd_auth[1]
+    TSS2L_SYS_AUTH_COMMAND cmd_auth_array = {
+        .count = ARRAY_LEN(ctx.cmd_auth),
+        .auths = { ctx.cmd_auth[0], ctx.cmd_auth[1]}
     };
 
-    TSS2_SYS_CMD_AUTHS cmd_auth_array = {
-        .cmdAuthsCount = ARRAY_LEN(cmd_session_array),
-        .cmdAuths = cmd_session_array
-    };
-
-    TPMS_AUTH_RESPONSE session_data_out[ARRAY_LEN(ctx.cmd_auth)];
-    TPMS_AUTH_RESPONSE *session_data_array[] = {
-        &session_data_out[0],
-        &session_data_out[1]
-    };
-
-    TSS2_SYS_RSP_AUTHS sessions_data_out = {
-        .rspAuthsCount = ARRAY_LEN(session_data_array),
-        .rspAuths = session_data_array
-    };
+    TSS2L_SYS_AUTH_RESPONSE sessions_data_out;
 
     TPM2B_DATA qualifying_data = {
         .size = 4,
@@ -191,7 +168,7 @@ static bool certify_and_save_data(TSS2_SYS_CONTEXT *sapi_context) {
             ctx.handle.key, &cmd_auth_array, &qualifying_data, &scheme,
             &certify_info, &signature, &sessions_data_out));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("TPM2_Certify failed. Error Code: 0x%x", rval);
+        LOG_PERR(Tss2_Sys_Certify, rval);
         return false;
     }
 
@@ -202,7 +179,7 @@ static bool certify_and_save_data(TSS2_SYS_CONTEXT *sapi_context) {
         return false;
     }
 
-    return tpm2_convert_signature(&signature, ctx.sig_fmt, ctx.file_path.sig);
+    return tpm2_convert_sig(&signature, ctx.sig_fmt, ctx.file_path.sig);
 }
 
 static bool on_option(char key, char *value) {
@@ -263,7 +240,7 @@ static bool on_option(char key, char *value) {
         if (files_does_file_exist(value)) {
             return false;
         }
-        ctx.file_path.sig = optarg;
+        ctx.file_path.sig = value;
         ctx.flags.s = 1;
         break;
     case 'c':
@@ -279,12 +256,12 @@ static bool on_option(char key, char *value) {
             LOG_ERR("Multiple specifications of -C");
             return false;
         }
-        ctx.context_file = optarg;
+        ctx.context_file = value;
         ctx.flags.C = 1;
         break;
     case 'f':
         ctx.flags.f = 1;
-        ctx.sig_fmt = tpm2_parse_signature_format(optarg);
+        ctx.sig_fmt = tpm2_convert_sig_fmt_from_optarg(value);
 
         if (ctx.sig_fmt == signature_format_err) {
             return false;
@@ -297,21 +274,20 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     const struct option topts[] = {
-      {"object-handle", required_argument, NULL, 'H'},
-      {"key-handle",    required_argument, NULL, 'k'},
-      {"pwdo",         required_argument, NULL, 'P'},
-      {"pwdk",         required_argument, NULL, 'K'},
-      {"halg",         required_argument, NULL, 'g'},
-      {"attest-file",   required_argument, NULL, 'a'},
-      {"sig-file",      required_argument, NULL, 's'},
-      {"obj-context",   required_argument, NULL, 'C'},
-      {"key-context",   required_argument, NULL, 'c'},
-      { "format",      required_argument, NULL, 'f' },
-      {NULL,           no_argument,       NULL, '\0'}
+      { "object-handle", required_argument, NULL, 'H' },
+      { "key-handle",    required_argument, NULL, 'k' },
+      { "pwdo",          required_argument, NULL, 'P' },
+      { "pwdk",          required_argument, NULL, 'K' },
+      { "halg",          required_argument, NULL, 'g' },
+      { "attest-file",   required_argument, NULL, 'a' },
+      { "sig-file",      required_argument, NULL, 's' },
+      { "obj-context",   required_argument, NULL, 'C' },
+      { "key-context",   required_argument, NULL, 'c' },
+      {  "format",       required_argument, NULL, 'f' },
     };
 
     *opts = tpm2_options_new("H:k:P:K:g:a:s:C:c:f:", ARRAY_LEN(topts), topts,
-            on_option, NULL);
+                             on_option, NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }
@@ -329,7 +305,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
     /* Load input files */
     if (ctx.flags.C) {
-        result = files_load_tpm_context_from_file(sapi_context, &ctx.handle.obj,
+        result = files_load_tpm_context_from_path(sapi_context, &ctx.handle.obj,
                                                   ctx.context_file);
         if (!result) {
             return 1;
@@ -337,7 +313,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     }
 
     if (ctx.flags.c) {
-        result = files_load_tpm_context_from_file(sapi_context, &ctx.handle.key,
+        result = files_load_tpm_context_from_path(sapi_context, &ctx.handle.key,
                                                   ctx.context_key_file);
         if (!result) {
             return 1;

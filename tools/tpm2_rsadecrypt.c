@@ -1,5 +1,5 @@
 //**********************************************************************;
-// Copyright (c) 2015, Intel Corporation
+// Copyright (c) 2015-2018, Intel Corporation
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -33,12 +33,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
-#include "tpm2_options.h"
-#include "tpm2_password_util.h"
 #include "files.h"
 #include "log.h"
+#include "tpm2_options.h"
+#include "tpm2_password_util.h"
+#include "tpm2_session.h"
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
 
@@ -69,18 +70,8 @@ static bool rsa_decrypt_and_save(TSS2_SYS_CONTEXT *sapi_context) {
     TPM2B_DATA label;
     TPM2B_PUBLIC_KEY_RSA message = TPM2B_TYPE_INIT(TPM2B_PUBLIC_KEY_RSA, buffer);
 
-    TSS2_SYS_CMD_AUTHS sessions_data;
-    TPMS_AUTH_RESPONSE session_data_out;
-    TSS2_SYS_RSP_AUTHS sessions_data_out;
-    TPMS_AUTH_COMMAND *session_data_array[1];
-    TPMS_AUTH_RESPONSE *session_data_out_array[1];
-
-    session_data_array[0] = &ctx.session_data;
-    sessions_data.cmdAuths = &session_data_array[0];
-    session_data_out_array[0] = &session_data_out;
-    sessions_data_out.rspAuths = &session_data_out_array[0];
-    sessions_data_out.rspAuthsCount = 1;
-    sessions_data.cmdAuthsCount = 1;
+    TSS2L_SYS_AUTH_COMMAND sessions_data = { 1, { ctx.session_data }};
+    TSS2L_SYS_AUTH_RESPONSE sessions_data_out;
 
     inScheme.scheme = TPM2_ALG_RSAES;
     label.size = 0;
@@ -89,7 +80,7 @@ static bool rsa_decrypt_and_save(TSS2_SYS_CONTEXT *sapi_context) {
             &sessions_data, &ctx.cipher_text, &inScheme, &label, &message,
             &sessions_data_out));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("rsaDecrypt failed, error code: 0x%x", rval);
+        LOG_PERR(Tss2_Sys_RSA_Decrypt, rval);
         return false;
     }
 
@@ -104,7 +95,7 @@ static bool on_option(char key, char *value) {
         bool result = tpm2_util_string_to_uint32(value, &ctx.key_handle);
         if (!result) {
             LOG_ERR("Could not convert key handle to number, got: \"%s\"",
-                    optarg);
+                    value);
             return false;
         }
         ctx.flags.k = 1;
@@ -113,7 +104,7 @@ static bool on_option(char key, char *value) {
     case 'P': {
         bool result = tpm2_password_util_from_optarg(value, &ctx.session_data.hmac);
         if (!result) {
-            LOG_ERR("Invalid key password, got\"%s\"", optarg);
+            LOG_ERR("Invalid key password, got\"%s\"", value);
             return false;
         }
         ctx.flags.P = 1;
@@ -130,26 +121,27 @@ static bool on_option(char key, char *value) {
     }
         break;
     case 'o': {
-        bool result = files_does_file_exist(optarg);
+        bool result = files_does_file_exist(value);
         if (result) {
             return false;
         }
-        ctx.output_file_path = optarg;
+        ctx.output_file_path = value;
         ctx.flags.o = 1;
     }
         break;
     case 'c':
-        ctx.context_key_file = optarg;
+        ctx.context_key_file = value;
         ctx.flags.c = 1;
         break;
-    case 'S':
-         if (!tpm2_util_string_to_uint32(value, &ctx.session_data.sessionHandle)) {
-             LOG_ERR("Could not convert session handle to number, got: \"%s\"",
-                     optarg);
-             return false;
-         }
-         break;
-         /* no default */
+    case 'S': {
+        tpm2_session *s = tpm2_session_restore(value);
+        if (!s) {
+            return false;
+        }
+
+        ctx.session_data.sessionHandle = tpm2_session_get_handle(s);
+        tpm2_session_free(&s);
+    } break;
     }
 
     return true;
@@ -158,16 +150,16 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     static struct option topts[] = {
-      { "key-handle",   required_argument, NULL, 'k'},
-      { "pwdk",        required_argument, NULL, 'P'},
-      { "in-file",      required_argument, NULL, 'I'},
-      { "out-file",     required_argument, NULL, 'o'},
-      { "key-context",  required_argument, NULL, 'c'},
-      { "input-session-handle",1,         NULL, 'S' },
+      { "key-handle",   required_argument, NULL, 'k' },
+      { "pwdk",         required_argument, NULL, 'P' },
+      { "in-file",      required_argument, NULL, 'I' },
+      { "out-file",     required_argument, NULL, 'o' },
+      { "key-context",  required_argument, NULL, 'c' },
+      { "session",      required_argument, NULL, 'S' },
     };
 
     *opts = tpm2_options_new("k:P:I:o:c:S:", ARRAY_LEN(topts), topts,
-            on_option, NULL);
+                             on_option, NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }
@@ -181,7 +173,7 @@ static bool init(TSS2_SYS_CONTEXT *sapi_context) {
     }
 
     if (ctx.flags.c) {
-        bool result = files_load_tpm_context_from_file(sapi_context,
+        bool result = files_load_tpm_context_from_path(sapi_context,
                 &ctx.key_handle, ctx.context_key_file);
         if (!result) {
             return false;

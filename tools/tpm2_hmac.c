@@ -1,5 +1,5 @@
 //**********************************************************************;
-// Copyright (c) 2015, Intel Corporation
+// Copyright (c) 2015-2018, Intel Corporation
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -36,15 +36,16 @@
 #include <string.h>
 
 #include <limits.h>
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
+#include "files.h"
+#include "log.h"
+#include "tpm2_alg_util.h"
 #include "tpm2_options.h"
 #include "tpm2_password_util.h"
-#include "tpm2_util.h"
-#include "log.h"
-#include "files.h"
-#include "tpm2_alg_util.h"
+#include "tpm2_session.h"
 #include "tpm2_tool.h"
+#include "tpm2_util.h"
 
 typedef struct tpm_hmac_ctx tpm_hmac_ctx;
 struct tpm_hmac_ctx {
@@ -66,24 +67,13 @@ static tpm_hmac_ctx ctx = {
     .algorithm = TPM2_ALG_SHA1,
 };
 
-#define TSS2_APP_HMAC_RC_FAILED (0x42 + 0x100 + TSS2_APP_ERROR_LEVEL)
+static bool tpm_hmac_file(TSS2_SYS_CONTEXT *sapi_context, TPM2B_DIGEST *result) {
 
-TSS2_RC tpm_hmac_file(TSS2_SYS_CONTEXT *sapi_context, TPM2B_DIGEST *result) {
+    TSS2L_SYS_AUTH_COMMAND sessions_data;
+    TSS2L_SYS_AUTH_RESPONSE sessions_data_out;
 
-    TPMS_AUTH_RESPONSE session_data_out;
-    TSS2_SYS_CMD_AUTHS sessions_data;
-    TSS2_SYS_RSP_AUTHS sessions_data_out;
-    TPMS_AUTH_COMMAND *session_data_array[1];
-    TPMS_AUTH_RESPONSE *session_data_out_array[1];
-
-    session_data_array[0] = &ctx.session_data;
-    session_data_out_array[0] = &session_data_out;
-
-    sessions_data_out.rspAuths = &session_data_out_array[0];
-    sessions_data.cmdAuths = &session_data_array[0];
-
-    sessions_data_out.rspAuthsCount = 1;
-    sessions_data.cmdAuthsCount = 1;
+    sessions_data.count = 1;
+    sessions_data.auths[0] = ctx.session_data;
 
     unsigned long file_size = 0;
 
@@ -100,12 +90,18 @@ TSS2_RC tpm_hmac_file(TSS2_SYS_CONTEXT *sapi_context, TPM2B_DIGEST *result) {
         res = files_read_bytes(ctx.input, buffer.buffer, buffer.size);
         if (!res) {
             LOG_ERR("Error reading input file!");
-            return TSS2_APP_HMAC_RC_FAILED;
+            return false;
         }
 
-        return TSS2_RETRY_EXP(Tss2_Sys_HMAC(sapi_context, ctx.key_handle,
+        TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_HMAC(sapi_context, ctx.key_handle,
                 &sessions_data, &buffer, ctx.algorithm, result,
                 &sessions_data_out));
+        if (rval != TSS2_RC_SUCCESS) {
+            LOG_PERR(TSS2_RC_SUCCESS, rval);
+            return false;
+        }
+
+        return true;
     }
 
     TPM2B_AUTH null_auth = { .size = 0 };
@@ -119,8 +115,8 @@ TSS2_RC tpm_hmac_file(TSS2_SYS_CONTEXT *sapi_context, TPM2B_DIGEST *result) {
     TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_HMAC_Start(sapi_context, ctx.key_handle, &sessions_data,
             &null_auth, ctx.algorithm, &sequence_handle, &sessions_data_out));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("Tss2_Sys_HMAC_Start failed: 0x%X", rval);
-        return rval;
+        LOG_PERR(Tss2_Sys_HMAC_Start, rval);
+        return false;
     }
 
     /* If we know the file size, we decrement the amount read and terminate the loop
@@ -138,7 +134,7 @@ TSS2_RC tpm_hmac_file(TSS2_SYS_CONTEXT *sapi_context, TPM2B_DIGEST *result) {
                 BUFFER_SIZE(typeof(data), buffer), input);
         if (ferror(input)) {
             LOG_ERR("Error reading from input file");
-            return TSS2_APP_HMAC_RC_FAILED;
+            return false;
         }
 
         data.size = bytes_read;
@@ -146,7 +142,8 @@ TSS2_RC tpm_hmac_file(TSS2_SYS_CONTEXT *sapi_context, TPM2B_DIGEST *result) {
         /* if data was read, update the sequence */
         rval = TSS2_RETRY_EXP(Tss2_Sys_SequenceUpdate(sapi_context, sequence_handle,
                 &sessions_data, &data, &sessions_data_out));
-        if (rval != TPM2_RC_SUCCESS) {
+        if (rval != TSS2_RC_SUCCESS) {
+            LOG_PERR(Tss2_Sys_SequenceUpdate, rval);
             return rval;
         }
 
@@ -166,24 +163,29 @@ TSS2_RC tpm_hmac_file(TSS2_SYS_CONTEXT *sapi_context, TPM2B_DIGEST *result) {
         bool res = files_read_bytes(input, data.buffer, left);
         if (!res) {
             LOG_ERR("Error reading from input file.");
-            return TSS2_APP_HMAC_RC_FAILED;
+            return false;
         }
     } else {
         data.size = 0;
     }
 
-    return TSS2_RETRY_EXP(Tss2_Sys_SequenceComplete(sapi_context, sequence_handle,
+    rval = TSS2_RETRY_EXP(Tss2_Sys_SequenceComplete(sapi_context, sequence_handle,
             &sessions_data, &data, TPM2_RH_NULL, result, NULL,
             &sessions_data_out));
+    if (rval != TSS2_RC_SUCCESS) {
+        LOG_PERR(Tss2_Sys_SequenceComplete, rval);
+        return false;
+    }
+
+    return true;
 }
 
 
 static bool do_hmac_and_output(TSS2_SYS_CONTEXT *sapi_context) {
 
     TPM2B_DIGEST hmac_out = TPM2B_TYPE_INIT(TPM2B_DIGEST, buffer);
-    TSS2_RC rval = tpm_hmac_file(sapi_context, &hmac_out);
-    if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("tpm_hmac_file() failed: 0x%X", rval);
+    bool res = tpm_hmac_file(sapi_context, &hmac_out);
+    if (!res) {
         return false;
     }
 
@@ -249,13 +251,15 @@ static bool on_option(char key, char *value) {
         ctx.context_key_file_path = value;
         ctx.flags.c = 1;
         break;
-    case 'S':
-        if (!tpm2_util_string_to_uint32(value, &ctx.session_data.sessionHandle)) {
-            LOG_ERR("Could not convert session handle to number, got: \"%s\"",
-                    value);
+    case 'S': {
+        tpm2_session *s = tpm2_session_restore(value);
+        if (!s) {
             return false;
         }
-        break;
+
+        ctx.session_data.sessionHandle = tpm2_session_get_handle(s);
+        tpm2_session_free(&s);
+    } break;
     }
 
     return true;
@@ -281,18 +285,18 @@ static bool on_args(int argc, char **argv) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     const struct option topts[] = {
-        {"key-handle",   required_argument, NULL, 'k'},
-        {"key-context",  required_argument, NULL, 'c'},
-        {"pwdk",        required_argument, NULL, 'P'},
-        {"algorithm",   required_argument, NULL, 'g'},
-        {"outfile",     required_argument, NULL, 'o'},
-        {"input-session-handle",1,         NULL, 'S'},
-        {NULL,          no_argument,       NULL, '\0'}
+        { "key-handle",           required_argument, NULL, 'k' },
+        { "key-context",          required_argument, NULL, 'c' },
+        { "pwdk",                 required_argument, NULL, 'P' },
+        { "algorithm",            required_argument, NULL, 'g' },
+        { "out-file",             required_argument, NULL, 'o' },
+        { "session",              required_argument, NULL, 'S' },
     };
 
     ctx.input = stdin;
 
-    *opts = tpm2_options_new("k:P:g:o:S:c:", ARRAY_LEN(topts), topts, on_option, on_args);
+    *opts = tpm2_options_new("k:P:g:o:S:c:", ARRAY_LEN(topts), topts, on_option,
+                             on_args, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }
@@ -309,16 +313,16 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
      */
     if (!(ctx.flags.k || ctx.flags.c)) {
         LOG_ERR("Must specify options k or c");
-        return false;
+        return rc;
     }
 
     if (ctx.flags.c) {
-        result = files_load_tpm_context_from_file(sapi_context, &ctx.key_handle,
+        result = files_load_tpm_context_from_path(sapi_context, &ctx.key_handle,
                                                   ctx.context_key_file_path);
         if (!result) {
             LOG_ERR("Loading tpm context from file \"%s\" failed.",
                     ctx.context_key_file_path);
-            return false;
+            return rc;
         }
     }
 

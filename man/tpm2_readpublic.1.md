@@ -24,7 +24,7 @@
 
     Filename for object context.
 
-  * **-o**, **--opu**:
+  * **-o**, **--out-file**:
 
     The output file path, recording the public portion of the object.
 
@@ -44,10 +44,4 @@ tpm2_readpublic -H 0x81010002 --opu output.dat
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
+[footer](common/footer.md)

@@ -1,5 +1,5 @@
 //**********************************************************************;
-// Copyright (c) 2015, Intel Corporation
+// Copyright (c) 2015-2018, Intel Corporation
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -38,16 +38,17 @@
 #include <ctype.h>
 #include <stdbool.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
+#include "files.h"
+#include "log.h"
 #include "tpm2_options.h"
 #include "tpm2_password_util.h"
-#include "log.h"
-#include "tpm2_util.h"
-#include "files.h"
+#include "tpm2_session.h"
 #include "tpm2_tool.h"
+#include "tpm2_util.h"
 
-TPM2_HANDLE handle2048rsa;
+TPM2_HANDLE handle;
 
 typedef struct tpm_load_ctx tpm_load_ctx;
 struct tpm_load_ctx {
@@ -78,37 +79,28 @@ static tpm_load_ctx ctx = {
 
 int load (TSS2_SYS_CONTEXT *sapi_context) {
     UINT32 rval;
-    TPMS_AUTH_RESPONSE sessionDataOut;
-    TSS2_SYS_CMD_AUTHS sessionsData;
-    TSS2_SYS_RSP_AUTHS sessionsDataOut;
-    TPMS_AUTH_COMMAND *sessionDataArray[1];
-    TPMS_AUTH_RESPONSE *sessionDataOutArray[1];
+    TSS2L_SYS_AUTH_COMMAND sessionsData;
+    TSS2L_SYS_AUTH_RESPONSE sessionsDataOut;
 
     TPM2B_NAME nameExt = TPM2B_TYPE_INIT(TPM2B_NAME, name);
 
-    sessionDataArray[0] = &ctx.session_data;
-    sessionDataOutArray[0] = &sessionDataOut;
-
-    sessionsDataOut.rspAuths = &sessionDataOutArray[0];
-    sessionsData.cmdAuths = &sessionDataArray[0];
-
-    sessionsDataOut.rspAuthsCount = 1;
-    sessionsData.cmdAuthsCount = 1;
+    sessionsData.count = 1;
+    sessionsData.auths[0] = ctx.session_data;
 
     rval = TSS2_RETRY_EXP(Tss2_Sys_Load(sapi_context,
                          ctx.parent_handle,
                          &sessionsData,
                          &ctx.in_private,
                          &ctx.in_public,
-                         &handle2048rsa,
+                         &handle,
                          &nameExt,
                          &sessionsDataOut));
     if(rval != TPM2_RC_SUCCESS)
     {
-        LOG_ERR("\nLoad Object Failed ! ErrorCode: 0x%0x\n",rval);
+        LOG_PERR(Tss2_Sys_Load, rval);
         return -1;
     }
-    tpm2_tool_output("\nLoad succ.\nLoadedHandle: 0x%08x\n\n",handle2048rsa);
+    tpm2_tool_output("handle: 0x%08x\n", handle);
 
     if (ctx.out_file) {
         if(!files_save_bytes_to_file(ctx.out_file, nameExt.name, nameExt.size)) {
@@ -125,7 +117,8 @@ static bool on_option(char key, char *value) {
 
     switch(key) {
     case 'H':
-        if (!tpm2_util_string_to_uint32(optarg, &ctx.parent_handle)) {
+        if (!tpm2_util_string_to_uint32(value, &ctx.parent_handle)) {
+            LOG_ERR("Invalid parent key handle, got\"%s\"", value);
                 return false;
         }
         ctx.flags.H = 1;
@@ -138,14 +131,14 @@ static bool on_option(char key, char *value) {
         }
         break;
     case 'u':
-        if(!files_load_public(optarg, &ctx.in_public)) {
+        if(!files_load_public(value, &ctx.in_public)) {
             return false;;
         }
         ctx.flags.u = 1;
         break;
     case 'r':
-        ctx.in_private.size = sizeof(ctx.in_private.buffer);
-        if(!files_load_bytes_from_path(value, ctx.in_private.buffer, &ctx.in_private.size)) {
+        res = files_load_private(value, &ctx.in_private);
+        if(!res) {
             return false;
         }
         ctx.flags.r = 1;
@@ -170,13 +163,15 @@ static bool on_option(char key, char *value) {
         }
         ctx.flags.C = 1;
         break;
-    case 'S':
-        if (!tpm2_util_string_to_uint32(value, &ctx.session_data.sessionHandle)) {
-            LOG_ERR("Could not convert session handle to number, got: \"%s\"",
-                    value);
+    case 'S': {
+        tpm2_session *s = tpm2_session_restore(value);
+        if (!s) {
             return false;
         }
-        break;
+
+        ctx.session_data.sessionHandle = tpm2_session_get_handle(s);
+        tpm2_session_free(&s);
+    } break;
     }
 
     return true;
@@ -185,21 +180,21 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     const struct option topts[] = {
-      {"parent",1,NULL,'H'},
-      {"pwdp",1,NULL,'P'},
-      {"pubfile",1,NULL,'u'},
-      {"privfile",1,NULL,'r'},
-      {"name",1,NULL,'n'},
-      {"context",1,NULL,'C'},
-      {"context-parent",1,NULL,'c'},
-      {"input-session-handle",1,NULL,'S'},
-      {0,0,0,0}
+      { "parent",               required_argument, NULL, 'H' },
+      { "pwdp",                 required_argument, NULL, 'P' },
+      { "pubfile",              required_argument, NULL, 'u' },
+      { "privfile",             required_argument, NULL, 'r' },
+      { "name",                 required_argument, NULL, 'n' },
+      { "context",              required_argument, NULL, 'C' },
+      { "context-parent",       required_argument, NULL, 'c' },
+      { "session",              required_argument, NULL, 'S' },
     };
 
     setbuf(stdout, NULL);
     setvbuf (stdout, NULL, _IONBF, BUFSIZ);
 
-    *opts = tpm2_options_new("H:P:u:r:n:C:c:S:", ARRAY_LEN(topts), topts, on_option, NULL);
+    *opts = tpm2_options_new("H:P:u:r:n:C:c:S:", ARRAY_LEN(topts), topts,
+                             on_option, NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }
@@ -216,7 +211,7 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     }
 
     if(ctx.flags.c) {
-        returnVal = files_load_tpm_context_from_file(sapi_context,
+        returnVal = files_load_tpm_context_from_path(sapi_context,
                                                &ctx.parent_handle,
                                                ctx.context_parent_file) != true;
         if (returnVal) {
@@ -230,8 +225,8 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     }
 
     if (ctx.flags.C) {
-        returnVal = files_save_tpm_context_to_file (sapi_context,
-                                                    handle2048rsa,
+        returnVal = files_save_tpm_context_to_path (sapi_context,
+                                                    handle,
                                                     ctx.context_file) != true;
         if (returnVal) {
             return 1;

@@ -1,5 +1,5 @@
 //**********************************************************************;
-// Copyright (c) 2015, Intel Corporation
+// Copyright (c) 2015-2018, Intel Corporation
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -43,14 +43,15 @@
 #include <openssl/buffer.h>
 #include <openssl/evp.h>
 #include <openssl/sha.h>
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
-#include "tpm2_options.h"
-#include "log.h"
 #include "files.h"
-#include "tpm_hash.h"
+#include "log.h"
 #include "tpm2_alg_util.h"
+#include "tpm2_hash.h"
+#include "tpm2_options.h"
 #include "tpm2_password_util.h"
+#include "tpm2_session.h"
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
 
@@ -91,7 +92,7 @@ int set_key_algorithm(TPM2B_PUBLIC *inPublic) {
     inPublic->publicArea.objectAttributes |= TPMA_OBJECT_RESTRICTED;
     inPublic->publicArea.objectAttributes &= ~TPMA_OBJECT_USERWITHAUTH;
     inPublic->publicArea.objectAttributes |= TPMA_OBJECT_ADMINWITHPOLICY;
-    inPublic->publicArea.objectAttributes &= ~TPMA_OBJECT_SIGN;
+    inPublic->publicArea.objectAttributes &= ~TPMA_OBJECT_SIGN_ENCRYPT;
     inPublic->publicArea.objectAttributes |= TPMA_OBJECT_DECRYPT;
     inPublic->publicArea.objectAttributes |= TPMA_OBJECT_FIXEDTPM;
     inPublic->publicArea.objectAttributes |= TPMA_OBJECT_FIXEDPARENT;
@@ -144,11 +145,8 @@ int set_key_algorithm(TPM2B_PUBLIC *inPublic) {
 int createEKHandle(TSS2_SYS_CONTEXT *sapi_context)
 {
     UINT32 rval;
-    TPMS_AUTH_RESPONSE sessionDataOut;
-    TSS2_SYS_CMD_AUTHS sessionsData;
-    TSS2_SYS_RSP_AUTHS sessionsDataOut;
-    TPMS_AUTH_COMMAND *sessionDataArray[1];
-    TPMS_AUTH_RESPONSE *sessionDataOutArray[1];
+    TSS2L_SYS_AUTH_COMMAND sessionsData;
+    TSS2L_SYS_AUTH_RESPONSE sessionsDataOut;
 
     TPM2B_SENSITIVE_CREATE inSensitive = TPM2B_TYPE_INIT(TPM2B_SENSITIVE_CREATE, sensitive);
     TPM2B_PUBLIC inPublic = TPM2B_TYPE_INIT(TPM2B_PUBLIC, publicArea);
@@ -164,14 +162,8 @@ int createEKHandle(TSS2_SYS_CONTEXT *sapi_context)
 
     TPM2_HANDLE handle2048ek;
 
-    sessionDataArray[0] = &ctx.endorse_session_data;
-    sessionDataOutArray[0] = &sessionDataOut;
-
-    sessionsDataOut.rspAuths = &sessionDataOutArray[0];
-    sessionsData.cmdAuths = &sessionDataArray[0];
-
-    sessionsDataOut.rspAuthsCount = 1;
-    sessionsData.cmdAuthsCount = 1;
+    sessionsData.count = 1;
+    sessionsData.auths[0] = ctx.endorse_session_data;
 
     memcpy(&inSensitive.sensitive.userAuth, &ctx.ek_password,
            sizeof(ctx.ek_password));
@@ -190,8 +182,8 @@ int createEKHandle(TSS2_SYS_CONTEXT *sapi_context)
                                   &creationData, &creationHash, &creationTicket,
                                   &name, &sessionsDataOut));
     if (rval != TPM2_RC_SUCCESS ) {
-          LOG_ERR("TPM2_CreatePrimary Error. TPM Error:0x%x", rval);
-          return 1;
+        LOG_PERR(Tss2_Sys_CreatePrimary, rval);
+        return 1;
     }
     LOG_INFO("EK create succ.. Handle: 0x%8.8x", handle2048ek);
 
@@ -202,12 +194,12 @@ int createEKHandle(TSS2_SYS_CONTEXT *sapi_context)
             return 1;
         }
 
-        sessionDataArray[0] = &ctx.owner_session_data;
+        sessionsData.auths[0] = ctx.owner_session_data;
 
         rval = TSS2_RETRY_EXP(Tss2_Sys_EvictControl(sapi_context, TPM2_RH_OWNER, handle2048ek,
                                      &sessionsData, ctx.persistent_handle, &sessionsDataOut));
         if (rval != TPM2_RC_SUCCESS ) {
-            LOG_ERR("EvictControl:Make EK persistent Error. TPM Error:0x%x", rval);
+            LOG_PERR(Tss2_Sys_EvictControl, rval);
             return 1;
         }
         LOG_INFO("EvictControl EK persistent succ.");
@@ -216,7 +208,7 @@ int createEKHandle(TSS2_SYS_CONTEXT *sapi_context)
     rval = TSS2_RETRY_EXP(Tss2_Sys_FlushContext(sapi_context,
                                  handle2048ek));
     if (rval != TPM2_RC_SUCCESS ) {
-        LOG_ERR("Flush transient EK failed. TPM Error:0x%x", rval);
+        LOG_PERR(Tss2_Sys_FlushContext, rval);
         return 1;
     }
 
@@ -268,11 +260,13 @@ static unsigned char *HashEKPublicKey(void) {
     }
 
     if (ctx.verbose) {
+        tpm2_tool_output("public-key-hash:\n");
+        tpm2_tool_output("  sha256: ");
         unsigned i;
         for (i = 0; i < SHA256_DIGEST_LENGTH; i++) {
-            printf("%02X", hash[i]);
+            tpm2_tool_output("%02X", hash[i]);
         }
-        printf("\n");
+        tpm2_tool_output("\n");
     }
 
     return hash;
@@ -419,23 +413,27 @@ out_memory:
 
 int TPMinitialProvisioning(void)
 {
-    char *b64 = Base64Encode(HashEKPublicKey());
+    int rc = 1;
+    unsigned char *hash = HashEKPublicKey();
+    char *b64 = Base64Encode(hash);
     if (!b64) {
         LOG_ERR("Base64Encode returned null");
-        return 1;
+        goto out;
     }
 
     LOG_INFO("%s", b64);
 
-    int rc = RetrieveEndorsementCredentials(b64);
+    rc = RetrieveEndorsementCredentials(b64);
+
     free(b64);
+out:
+    free(hash);
     return rc;
 }
 
 static bool on_option(char key, char *value) {
 
     bool return_val;
-    UINT32 handle;
 
     switch (key) {
     case 'H':
@@ -447,21 +445,21 @@ static bool on_option(char key, char *value) {
     case 'e':
         return_val = tpm2_password_util_from_optarg(value, &ctx.endorse_session_data.hmac);
         if (!return_val) {
-            LOG_ERR("Invalid endorsement password, got\"%s\"", optarg);
+            LOG_ERR("Invalid endorsement password, got\"%s\"", value);
             return false;
         }
         break;
     case 'o':
         return_val = tpm2_password_util_from_optarg(value, &ctx.owner_session_data.hmac);
         if (!return_val) {
-            LOG_ERR("Invalid owner password, got\"%s\"", optarg);
+            LOG_ERR("Invalid owner password, got\"%s\"", value);
             return false;
         }
         break;
     case 'P':
         return_val = tpm2_password_util_from_optarg(value, &ctx.ek_password);
         if (!return_val) {
-            LOG_ERR("Invalid EK password, got\"%s\"", optarg);
+            LOG_ERR("Invalid EK password, got\"%s\"", value);
             return false;
         }
         break;
@@ -492,20 +490,18 @@ static bool on_option(char key, char *value) {
         ctx.SSL_NO_VERIFY = 1;
         LOG_WARN("TLS communication with the said TPM manufacturer server setup with SSL_NO_VERIFY!");
         break;
-    case 'S':
-        return_val = tpm2_util_string_to_uint32(value, &handle);
-        if (!return_val) {
-            LOG_ERR("Could not convert session handle to number, got: \"%s\"",
-                    value);
+    case 'S': {
+        tpm2_session *s = tpm2_session_restore(value);
+        if (!s) {
             return false;
         }
 
         ctx.owner_session_data.sessionHandle =
-        ctx.endorse_session_data.sessionHandle = handle;
-
-        break;
+                ctx.endorse_session_data.sessionHandle =
+                        tpm2_session_get_handle(s);
+        tpm2_session_free(&s);
+    } break;
     }
-
     return true;
 }
 
@@ -525,21 +521,21 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
 
     const struct option topts[] =
     {
-        { "endorse-passwd", 1, NULL, 'e' },
-        { "owner-passwd"  , 1, NULL, 'o' },
-        { "handle"       , 1, NULL, 'H' },
-        { "ek-passwd"     , 1, NULL, 'P' },
-        { "alg"          , 1, NULL, 'g' },
-        { "output"        , 1, NULL, 'f' },
-        { "non-persistent", 0, NULL, 'N' },
-        { "offline"       , 1, NULL, 'O' },
-        { "ec-cert"       , 1, NULL, 'E' },
-        { "SSL-NO-VERIFY" , 0, NULL, 'U' },
-        {"input-session-handle",1,NULL,'S'},
+        { "endorse-passwd",       required_argument, NULL, 'e' },
+        { "owner-passwd",         required_argument, NULL, 'o' },
+        { "handle",               required_argument, NULL, 'H' },
+        { "ek-passwd",            required_argument, NULL, 'P' },
+        { "algorithm",            required_argument, NULL, 'g' },
+        { "out-file",             required_argument, NULL, 'f' },
+        { "non-persistent",       no_argument,       NULL, 'N' },
+        { "offline",              required_argument, NULL, 'O' },
+        { "ec-cert",              required_argument, NULL, 'E' },
+        { "SSL-NO-VERIFY",        no_argument,       NULL, 'U' },
+        { "session",              required_argument, NULL, 'S' },
     };
 
     *opts = tpm2_options_new("e:o:H:P:g:f:NO:E:S:i:U", ARRAY_LEN(topts), topts,
-            on_option, on_args);
+                             on_option, on_args, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }

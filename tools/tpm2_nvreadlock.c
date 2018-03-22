@@ -1,5 +1,5 @@
 //**********************************************************************;
-// Copyright (c) 2015, Intel Corporation
+// Copyright (c) 2015-2018, Intel Corporation
 // Copyright (c) 2016, Atom Software Studios
 // All rights reserved.
 //
@@ -36,18 +36,20 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
+#include "log.h"
+#include "tpm2_hierarchy.h"
 #include "tpm2_options.h"
 #include "tpm2_password_util.h"
-#include "log.h"
+#include "tpm2_session.h"
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
 
 typedef struct tpm_nvreadlock_ctx tpm_nvreadlock_ctx;
 struct tpm_nvreadlock_ctx {
     UINT32 nv_index;
-    UINT32 auth_handle;
+    TPMI_RH_PROVISION auth_handle;
     UINT32 size_to_read;
     UINT32 offset;
     TPMS_AUTH_COMMAND session_data;
@@ -61,27 +63,14 @@ static tpm_nvreadlock_ctx ctx = {
 
 static bool nv_readlock(TSS2_SYS_CONTEXT *sapi_context) {
 
-    TPMS_AUTH_RESPONSE session_data_out;
-    TSS2_SYS_CMD_AUTHS sessions_data;
-    TSS2_SYS_RSP_AUTHS sessions_data_out;
-
-    TPMS_AUTH_COMMAND *session_data_array[1];
-    TPMS_AUTH_RESPONSE *sessionDataOutArray[1];
-
-    session_data_array[0] = &ctx.session_data;
-    sessionDataOutArray[0] = &session_data_out;
-
-    sessions_data_out.rspAuths = &sessionDataOutArray[0];
-    sessions_data.cmdAuths = &session_data_array[0];
-
-    sessions_data_out.rspAuthsCount = 1;
-    sessions_data.cmdAuthsCount = 1;
+    TSS2L_SYS_AUTH_RESPONSE sessions_data_out;
+    TSS2L_SYS_AUTH_COMMAND sessions_data = { 1, { ctx.session_data }};
 
     TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_NV_ReadLock(sapi_context, ctx.auth_handle, ctx.nv_index,
             &sessions_data, &sessions_data_out));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("Failed to lock NVRAM area at index 0x%x (%d).Error:0x%x",
-                ctx.nv_index, ctx.nv_index, rval);
+        LOG_ERR("Failed to lock NVRAM area at index 0x%X" , ctx.nv_index);
+        LOG_PERR(Tss2_Sys_NV_ReadLock, rval);
         return false;
     }
 
@@ -107,15 +96,9 @@ static bool on_option(char key, char *value) {
         }
         break;
     case 'a':
-        result = tpm2_util_string_to_uint32(value, &ctx.auth_handle);
+        result = tpm2_hierarchy_from_optarg(value, &ctx.auth_handle,
+                TPM2_HIERARCHY_FLAGS_O|TPM2_HIERARCHY_FLAGS_P);
         if (!result) {
-            LOG_ERR("Could not convert auth handle to number, got: \"%s\"",
-                    value);
-            return false;
-        }
-
-        if (ctx.auth_handle == 0) {
-            LOG_ERR("Auth handle cannot be 0");
             return false;
         }
         break;
@@ -126,13 +109,15 @@ static bool on_option(char key, char *value) {
                 return false;
         }
         break;
-    case 'S':
-        if (!tpm2_util_string_to_uint32(value, &ctx.session_data.sessionHandle)) {
-            LOG_ERR("Could not convert session handle to number, got: \"%s\"",
-                    value);
+    case 'S': {
+        tpm2_session *s = tpm2_session_restore(value);
+        if (!s) {
             return false;
         }
-        break;
+
+        ctx.session_data.sessionHandle = tpm2_session_get_handle(s);
+        tpm2_session_free(&s);
+    } break;
     }
 
     return true;
@@ -141,14 +126,15 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     const struct option topts[] = {
-        { "index"       , required_argument, NULL, 'x' },
-        { "auth-handle"  , required_argument, NULL, 'a' },
-        { "handle-passwd", required_argument, NULL, 'P' },
-        { "passwdInHex" , no_argument,       NULL, 'X' },
-        { "input-session-handle",1,          NULL, 'S' },
+        { "index",                required_argument, NULL, 'x' },
+        { "auth-handle",          required_argument, NULL, 'a' },
+        { "handle-passwd",        required_argument, NULL, 'P' },
+        { "passwdInHex",          no_argument,       NULL, 'X' },
+        { "session",              required_argument, NULL, 'S' },
     };
 
-    *opts = tpm2_options_new("x:a:P:Xp:d:S:hv", ARRAY_LEN(topts), topts, on_option, NULL);
+    *opts = tpm2_options_new("x:a:P:Xp:d:S:hv", ARRAY_LEN(topts), topts,
+                             on_option, NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }

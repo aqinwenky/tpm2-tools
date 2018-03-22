@@ -1,6 +1,6 @@
 #;**********************************************************************;
 #
-# Copyright (c) 2015, Intel Corporation
+# Copyright (c) 2015-2018, Intel Corporation
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -29,27 +29,36 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 # THE POSSIBILITY OF SUCH DAMAGE.
 #;**********************************************************************;
+@CODE_COVERAGE_RULES@
+
+include src_vars.mk
 
 ACLOCAL_AMFLAGS = -I m4
 
-INCLUDE_DIRS = -I$(top_srcdir)/tools -I$(top_srcdir)/lib -I$(top_srcdir)/lib/tcti
+INCLUDE_DIRS = -I$(top_srcdir)/tools -I$(top_srcdir)/lib
 LIB_COMMON := lib/libcommon.a
 
 AM_CFLAGS := \
-    $(INCLUDE_DIRS) $(EXTRA_CFLAGS) $(SAPI_CFLAGS) $(TCTI_SOCK_CFLAGS) \
-    $(TCTI_TABRMD_CFLAGS) $(TCTI_DEV_CFLAGS) $(CRYPTO_CFLAGS)
+    $(INCLUDE_DIRS) $(EXTRA_CFLAGS) $(TSS2_SYS_CFLAGS) $(CRYPTO_CFLAGS) \
+    $(CODE_COVERAGE_CFLAGS)
 
-AM_LDFLAGS   := $(EXTRA_LDFLAGS)
+AM_LDFLAGS   := $(EXTRA_LDFLAGS) $(CODE_COVERAGE_LIBS)
 
 LDADD = \
-    $(LIB_COMMON) $(SAPI_LIBS) $(TCTI_SOCK_LIBS) $(TCTI_TABRMD_LIBS) \
-    $(TCTI_DEV_LIBS) $(CRYPTO_LIBS)
+    $(LIB_COMMON) $(TSS2_SYS_LIBS) $(CRYPTO_LIBS) -ldl
 
 # keep me sorted
 bin_PROGRAMS = \
+    tools/aux/tpm2_print \
+    tools/aux/tpm2_rc_decode \
     tools/tpm2_activatecredential \
     tools/tpm2_certify \
+    tools/tpm2_changeauth \
+    tools/tpm2_clear \
+    tools/tpm2_clearlock \
     tools/tpm2_create \
+    tools/tpm2_createak \
+    tools/tpm2_createek \
     tools/tpm2_createpolicy \
     tools/tpm2_createprimary \
     tools/tpm2_dictionarylockout \
@@ -58,8 +67,6 @@ bin_PROGRAMS = \
     tools/tpm2_evictcontrol \
     tools/tpm2_flushcontext \
     tools/tpm2_getmanufec \
-    tools/tpm2_getpubak \
-    tools/tpm2_getpubek \
     tools/tpm2_getrandom \
     tools/tpm2_hash \
     tools/tpm2_hmac \
@@ -77,76 +84,28 @@ bin_PROGRAMS = \
     tools/tpm2_pcrevent \
     tools/tpm2_pcrextend \
     tools/tpm2_pcrlist \
+    tools/tpm2_policypcr \
+    tools/tpm2_policyrestart \
     tools/tpm2_quote \
-    tools/tpm2_rc_decode \
     tools/tpm2_readpublic \
     tools/tpm2_rsadecrypt \
     tools/tpm2_rsaencrypt \
     tools/tpm2_send \
     tools/tpm2_sign \
+    tools/tpm2_startauthsession \
     tools/tpm2_startup \
-    tools/tpm2_takeownership \
     tools/tpm2_unseal \
     tools/tpm2_verifysignature
 
-tcti_src =
-if HAVE_TCTI_DEV
-tcti_src += \
-    lib/tcti/tpm2_tools_tcti_device.c \
-    lib/tcti/tpm2_tools_tcti_device.h
-endif
-if HAVE_TCTI_SOCK
-tcti_src += \
-    lib/tcti/tpm2_tools_tcti_socket.c \
-    lib/tcti/tpm2_tools_tcti_socket.h
-endif
-if HAVE_TCTI_TABRMD
-tcti_src += \
-    lib/tcti/tpm2_tools_tcti_abrmd.c \
-    lib/tcti/tpm2_tools_tcti_abrmd.h
-endif
-
-
 noinst_LIBRARIES = $(LIB_COMMON)
-lib_libcommon_a_SOURCES = \
-	$(tcti_src) \
-    lib/conversion.c \
-    lib/conversion.h \
-    lib/files.c \
-    lib/files.h \
-    lib/log.c \
-    lib/log.h \
-    lib/pcr.c \
-    lib/pcr.h \
-    lib/rc-decode.c \
-    lib/rc-decode.h \
-    lib/tpm2_alg_util.c \
-    lib/tpm2_alg_util.h \
-    lib/tpm2_attr_util.c \
-    lib/tpm2_attr_util.h \
-    lib/tpm2_errata.c \
-    lib/tpm2_errata.h \
-    lib/tpm2_header.h \
-    lib/tpm2_nv_util.h \
-    lib/tpm2_password_util.c \
-    lib/tpm2_password_util.h \
-    lib/tpm2_policy.c \
-    lib/tpm2_policy.h \
-    lib/tpm2_util.c \
-    lib/tpm2_util.h \
-    lib/tpm_hash.c \
-    lib/tpm_hash.h \
-    lib/tpm_hmac.c \
-    lib/tpm_hmac.h \
-    lib/tpm_kdfa.c \
-    lib/tpm_kdfa.h \
-    lib/tpm2_options.c \
-    lib/tpm2_options.h \
-    lib/tpm_session.c \
-    lib/tpm_session.h
-
+lib_libcommon_a_SOURCES = $(LIB_SRC)
 TOOL_SRC := tools/tpm2_tool.c tools/tpm2_tool.h
 
+tools_aux_tpm2_print_SOURCES = tools/aux/tpm2_print.c $(TOOL_SRC)
+tools_aux_tpm2_rc_decode_SOURCES = tools/aux/tpm2_rc_decode.c $(TOOL_SRC)
+
+tools_tpm2_clear_SOURCES = tools/tpm2_clear.c $(TOOL_SRC)
+tools_tpm2_clearlock_SOURCES = tools/tpm2_clearlock.c $(TOOL_SRC)
 tools_tpm2_create_SOURCES = tools/tpm2_create.c $(TOOL_SRC)
 tools_tpm2_createprimary_SOURCES = tools/tpm2_createprimary.c $(TOOL_SRC)
 tools_tpm2_getcap_SOURCES = tools/tpm2_getcap.c $(TOOL_SRC)
@@ -160,9 +119,9 @@ tools_tpm2_getmanufec_CFLAG = $(AM_CFLAGS) $(CURL_CFLAGS)
 tools_tpm2_getmanufec_LDADD = $(LDADD) $(CURL_LIBS)
 tools_tpm2_getmanufec_SOURCES = tools/tpm2_getmanufec.c $(TOOL_SRC)
 tools_tpm2_quote_SOURCES = tools/tpm2_quote.c $(TOOL_SRC)
-tools_tpm2_takeownership_SOURCES = tools/tpm2_takeownership.c $(TOOL_SRC)
-tools_tpm2_getpubek_SOURCES = tools/tpm2_getpubek.c $(TOOL_SRC)
-tools_tpm2_getpubak_SOURCES = tools/tpm2_getpubak.c $(TOOL_SRC)
+tools_tpm2_changeauth_SOURCES = tools/tpm2_changeauth.c $(TOOL_SRC)
+tools_tpm2_createek_SOURCES = tools/tpm2_createek.c $(TOOL_SRC)
+tools_tpm2_createak_SOURCES = tools/tpm2_createak.c $(TOOL_SRC)
 tools_tpm2_hash_SOURCES = tools/tpm2_hash.c $(TOOL_SRC)
 tools_tpm2_activatecredential_SOURCES = tools/tpm2_activatecredential.c $(TOOL_SRC)
 tools_tpm2_makecredential_SOURCES = tools/tpm2_makecredential.c $(TOOL_SRC)
@@ -187,15 +146,15 @@ tools_tpm2_dictionarylockout_SOURCES = tools/tpm2_dictionarylockout.c $(TOOL_SRC
 tools_tpm2_createpolicy_SOURCES = tools/tpm2_createpolicy.c $(TOOL_SRC)
 tools_tpm2_pcrextend_SOURCES = tools/tpm2_pcrextend.c $(TOOL_SRC)
 tools_tpm2_pcrevent_SOURCES = tools/tpm2_pcrevent.c $(TOOL_SRC)
-tools_tpm2_rc_decode_SOURCES = tools/tpm2_rc_decode.c $(TOOL_SRC)
 tools_tpm2_import_SOURCES = tools/tpm2_import.c $(TOOL_SRC)
 tools_tpm2_flushcontext_SOURCES = tools/tpm2_flushcontext.c $(TOOL_SRC)
+tools_tpm2_startauthsession_SOURCES = tools/tpm2_startauthsession.c $(TOOL_SRC)
+tools_tpm2_policypcr_SOURCES = tools/tpm2_policypcr.c $(TOOL_SRC)
+tools_tpm2_policyrestart_SOURCES = tools/tpm2_policyrestart.c $(TOOL_SRC)
 
 if UNIT
 TESTS = $(check_PROGRAMS)
 check_PROGRAMS = \
-    test/unit/tpm2-rc-decode_unit \
-    test/unit/tpm2-rc-entry_unit \
     test/unit/test_string_bytes \
     test/unit/test_files \
     test/unit/test_tpm2_header \
@@ -203,23 +162,18 @@ check_PROGRAMS = \
     test/unit/test_tpm2_alg_util \
     test/unit/test_pcr \
     test/unit/test_tpm2_password_util \
-    test/unit/test_tpm2_errata
-
-test_unit_tpm2_rc_decode_unit_CFLAGS  = $(AM_CFLAGS) $(CMOCKA_CFLAGS)
-test_unit_tpm2_rc_decode_unit_LDADD   = $(CMOCKA_LIBS) $(LIB_COMMON)
-test_unit_tpm2_rc_decode_unit_SOURCES = test/unit/tpm2-rc-decode_unit.c
-
-test_unit_tpm2_rc_entry_unit_CFLAGS   = $(AM_CFLAGS) $(CMOCKA_CFLAGS)
-test_unit_tpm2_rc_entry_unit_LDADD    = $(CMOCKA_LIBS) $(LIB_COMMON)
-test_unit_tpm2_rc_entry_unit_SOURCES  = test/unit/tpm2-rc-entry_unit.c
+    test/unit/test_tpm2_errata \
+    test/unit/test_tpm2_session \
+    test/unit/test_tpm2_policy \
+    test/unit/test_tpm2_hierarchy \
+    test/unit/test_tpm2_error
 
 test_unit_test_string_bytes_CFLAGS   = $(AM_CFLAGS) $(CMOCKA_CFLAGS)
 test_unit_test_string_bytes_LDADD    = $(CMOCKA_LIBS) $(LIB_COMMON)
 test_unit_test_string_bytes_SOURCES  = test/unit/test_string_bytes.c
 
 test_unit_test_files_CFLAGS   = $(AM_CFLAGS) $(CMOCKA_CFLAGS)
-test_unit_test_files_LDADD    = $(LIB_COMMON) $(CMOCKA_LIBS) $(TCTI_SOCK_LIBS) \
-                                $(TCTI_DEV_LIBS)
+test_unit_test_files_LDADD    = $(LIB_COMMON) $(CMOCKA_LIBS)
 test_unit_test_files_SOURCES  = test/unit/test_files.c
 
 test_unit_test_tpm2_header_CFLAGS   = $(AM_CFLAGS) $(CMOCKA_CFLAGS)
@@ -247,15 +201,54 @@ test_unit_test_tpm2_errata_LDFLAGS  = -Wl,--wrap=Tss2_Sys_GetCapability
 test_unit_test_tpm2_errata_LDADD    = $(CMOCKA_LIBS) $(LIB_COMMON)
 test_unit_test_tpm2_errata_SOURCES  = test/unit/test_tpm2_errata.c
 
+test_unit_test_tpm2_session_CFLAGS   = $(AM_CFLAGS) $(CMOCKA_CFLAGS)
+test_unit_test_tpm2_session_LDFLAGS  = -Wl,--wrap=Tss2_Sys_StartAuthSession \
+                                       -Wl,--wrap=Tss2_Sys_ContextSave \
+                                       -Wl,--wrap=Tss2_Sys_ContextLoad \
+                                       -Wl,--wrap=Tss2_Sys_PolicyRestart
+
+test_unit_test_tpm2_session_LDADD    = $(CMOCKA_LIBS) $(LIB_COMMON) $(LDADD)
+test_unit_test_tpm2_session_SOURCES  = test/unit/test_tpm2_session.c
+
+test_unit_test_tpm2_policy_CFLAGS   = $(AM_CFLAGS) $(CMOCKA_CFLAGS)
+test_unit_test_tpm2_policy_LDFLAGS  = -Wl,--wrap=Tss2_Sys_StartAuthSession \
+                                      -Wl,--wrap=Tss2_Sys_PolicyPCR \
+                                      -Wl,--wrap=Tss2_Sys_PCR_Read \
+                                      -Wl,--wrap=Tss2_Sys_PolicyGetDigest
+test_unit_test_tpm2_policy_LDADD    = $(CMOCKA_LIBS) $(LIB_COMMON) $(LDADD)
+test_unit_test_tpm2_policy_SOURCES  = test/unit/test_tpm2_policy.c
+
+test_unit_test_tpm2_hierarchy_CFLAGS   = $(AM_CFLAGS) $(CMOCKA_CFLAGS)
+test_unit_test_tpm2_hierarchy_LDADD    = $(CMOCKA_LIBS) $(LIB_COMMON)
+test_unit_test_tpm2_hierarchy_SOURCES  = test/unit/test_tpm2_hierarchy.c
+
+test_unit_test_tpm2_error_CFLAGS   = $(AM_CFLAGS) $(CMOCKA_CFLAGS)
+test_unit_test_tpm2_error_LDADD    = $(CMOCKA_LIBS) $(LIB_COMMON)
+test_unit_test_tpm2_error_SOURCES  = test/unit/test_tpm2_error.c
+
 endif
 
-EXTRA_DIST = $(top_srcdir)/man
+EXTRA_DIST = $(top_srcdir)/man \
+	     AUTHORS.md \
+	     CHANGELOG.md \
+	     CONTRIBUTING.md \
+	     INSTALL.md \
+	     LICENSE \
+	     MAINTAINERS.md \
+	     README.md \
+	     RELEASE.md \
+	     test/system
 
 if HAVE_PANDOC
     man1_MANS := \
     man/man1/tpm2_activatecredential.1 \
     man/man1/tpm2_certify.1 \
+    man/man1/tpm2_changeauth.1 \
+    man/man1/tpm2_clear.1 \
+    man/man1/tpm2_clearlock.1 \
     man/man1/tpm2_create.1 \
+    man/man1/tpm2_createak.1 \
+    man/man1/tpm2_createek.1 \
     man/man1/tpm2_createpolicy.1 \
     man/man1/tpm2_createprimary.1 \
     man/man1/tpm2_dictionarylockout.1 \
@@ -264,8 +257,6 @@ if HAVE_PANDOC
     man/man1/tpm2_evictcontrol.1 \
     man/man1/tpm2_flushcontext.1 \
     man/man1/tpm2_getmanufec.1 \
-    man/man1/tpm2_getpubak.1 \
-    man/man1/tpm2_getpubek.1 \
     man/man1/tpm2_getrandom.1 \
     man/man1/tpm2_hash.1 \
     man/man1/tpm2_hmac.1 \
@@ -283,6 +274,8 @@ if HAVE_PANDOC
     man/man1/tpm2_pcrevent.1 \
     man/man1/tpm2_pcrextend.1 \
     man/man1/tpm2_pcrlist.1 \
+    man/man1/tpm2_policypcr.1 \
+    man/man1/tpm2_policyrestart.1 \
     man/man1/tpm2_quote.1 \
     man/man1/tpm2_rc_decode.1 \
     man/man1/tpm2_readpublic.1 \
@@ -290,14 +283,24 @@ if HAVE_PANDOC
     man/man1/tpm2_rsaencrypt.1 \
     man/man1/tpm2_send.1 \
     man/man1/tpm2_sign.1 \
+    man/man1/tpm2_startauthsession.1 \
     man/man1/tpm2_startup.1 \
-    man/man1/tpm2_takeownership.1 \
     man/man1/tpm2_unseal.1 \
     man/man1/tpm2_verifysignature.1
+
+# If pandoc is enabled, we want to generate the manpages for the dist tarball
+EXTRA_DIST += $(man1_MANS)
+else
+# If pandoc is not enabled, we want to complain that you need pandoc for make dist,
+# so hook the target and complain.
+dist-hook:
+	@(>&2 echo "You do not have pandoc, a requirement for the distribution of manpages")
+	@exit 1
 endif
 
 MARKDOWN_COMMON_DEPS = \
 	man/common/alg.md \
+	man/common/footer.md \
 	man/common/hash.md \
 	man/common/obj-attrs.md \
 	man/common/object-alg.md \
@@ -335,6 +338,8 @@ man/man1/%.1 : man/%.1.md $(MARKDOWN_COMMON_DEPS)
 	    -e '/\[signature format specifiers\]/d' \
 	    -e '/\[object attribute specifiers\]/r man/common/obj-attrs.md' \
 	    -e '/\[object attribute specifiers\]/d' \
+	    -e '/\[footer\]/r man/common/footer.md' \
+	    -e '/\[footer\]/d' \
 	    < $< | pandoc -s -t man > $@
 
 CLEANFILES = $(man1_MANS)

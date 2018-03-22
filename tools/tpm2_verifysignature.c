@@ -33,12 +33,12 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
 #include "files.h"
 #include "log.h"
 #include "tpm2_alg_util.h"
-#include "tpm_hash.h"
+#include "tpm2_hash.h"
 #include "tpm2_options.h"
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
@@ -79,13 +79,7 @@ static bool verify_signature(TSS2_SYS_CONTEXT *sapi_context) {
     UINT32 rval;
     TPMT_TK_VERIFIED validation;
 
-    TPMS_AUTH_RESPONSE sessionDataOut;
-    TSS2_SYS_RSP_AUTHS sessionsDataOut;
-    TPMS_AUTH_RESPONSE *sessionDataOutArray[1];
-
-    sessionDataOutArray[0] = &sessionDataOut;
-    sessionsDataOut.rspAuths = &sessionDataOutArray[0];
-    sessionsDataOut.rspAuthsCount = 1;
+    TSS2L_SYS_AUTH_RESPONSE sessionsDataOut;
 
     UINT16 i;
     for (i = 0; i < ctx.msgHash.size; i++) {
@@ -96,7 +90,7 @@ static bool verify_signature(TSS2_SYS_CONTEXT *sapi_context) {
     rval = TSS2_RETRY_EXP(Tss2_Sys_VerifySignature(sapi_context, ctx.keyHandle, NULL,
             &ctx.msgHash, &ctx.signature, &validation, &sessionsDataOut));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("Tss2_Sys_VerifySignature failed, error code: 0x%x", rval);
+        LOG_PERR(Tss2_Sys_VerifySignature, rval);
         return false;
     }
 
@@ -166,7 +160,7 @@ static bool init(TSS2_SYS_CONTEXT *sapi_context) {
     }
 
     if (ctx.flags.key_context) {
-        bool result = files_load_tpm_context_from_file(sapi_context, &ctx.keyHandle,
+        bool result = files_load_tpm_context_from_path(sapi_context, &ctx.keyHandle,
                 ctx.context_key_file_path);
         if (!result) {
             goto err;
@@ -183,9 +177,9 @@ static bool init(TSS2_SYS_CONTEXT *sapi_context) {
             LOG_ERR("No digest set and no message file to compute from, cannot compute message hash!");
             goto err;
         }
-        int rc = tpm_hash_compute_data(sapi_context, ctx.halg,
+        bool res = tpm2_hash_compute_data(sapi_context, ctx.halg,
                 TPM2_RH_NULL, msg->buffer, msg->size, &ctx.msgHash, NULL);
-        if (rc) {
+        if (!res) {
             LOG_ERR("Compute message hash failed!");
             goto err;
         }
@@ -261,19 +255,19 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     const struct option topts[] = {
-            { "key-handle",  1, NULL, 'k' },
-            { "digest",     1, NULL, 'D' },
-            { "halg",       1, NULL, 'g' },
-            { "msg",        1, NULL, 'm' },
-            { "raw",        0, NULL, 'r' },
-            { "sig",        1, NULL, 's' },
-            { "ticket",     1, NULL, 't' },
-            { "key-context", 1, NULL, 'c' },
+            { "key-handle",  required_argument, NULL, 'k' },
+            { "digest",      required_argument, NULL, 'D' },
+            { "halg",        required_argument, NULL, 'g' },
+            { "message",     required_argument, NULL, 'm' },
+            { "raw",         no_argument,       NULL, 'r' },
+            { "sig",         required_argument, NULL, 's' },
+            { "ticket",      required_argument, NULL, 't' },
+            { "key-context", required_argument, NULL, 'c' },
     };
 
 
     *opts = tpm2_options_new("k:g:m:D:rs:t:c:", ARRAY_LEN(topts), topts,
-            on_option, NULL);
+                             on_option, NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }

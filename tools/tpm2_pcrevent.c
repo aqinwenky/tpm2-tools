@@ -1,5 +1,5 @@
 //**********************************************************************;
-// Copyright (c) 2015, Intel Corporation
+// Copyright (c) 2015-2018, Intel Corporation
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -35,13 +35,14 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
 #include "files.h"
 #include "log.h"
 #include "tpm2_alg_util.h"
 #include "tpm2_options.h"
 #include "tpm2_password_util.h"
+#include "tpm2_session.h"
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
 
@@ -58,37 +59,31 @@ struct tpm_pcrevent_ctx {
     TPMS_AUTH_COMMAND session_data;
 };
 
-#define TSS2_APP_PCREVENT_RC_FAILED (0x57 + 0x100 + TSS2_APP_ERROR_LEVEL)
-
 static tpm_pcrevent_ctx ctx = {
         .pcr = TPM2_RH_NULL,
         .session_data = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW),
 };
 
-static inline void swap_auths(TPMS_AUTH_COMMAND **auths) {
+static inline void swap_auths(TPMS_AUTH_COMMAND *a, TPMS_AUTH_COMMAND *b) {
 
-    TPMS_AUTH_COMMAND *tmp = auths[0];
-    auths[0] = auths[1];
-    auths[1] = tmp;
+    TPMS_AUTH_COMMAND tmp = *a;
+    *a = *b;
+    *b = tmp;
 }
 
-static TSS2_RC tpm_pcrevent_file(TSS2_SYS_CONTEXT *sapi_context,
+static bool tpm_pcrevent_file(TSS2_SYS_CONTEXT *sapi_context,
         TPML_DIGEST_VALUES *result) {
 
-    TPMS_AUTH_COMMAND empty_auth = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW);
-
-    TPMS_AUTH_COMMAND *all_auths[] = {
-        &ctx.session_data, /* auth for the pcr handle */
-        &empty_auth,       /* auth for the sequence handle */
-
-    };
-
-    TSS2_SYS_CMD_AUTHS cmd_auth_array = TSS2_SYS_CMD_AUTHS_INIT(all_auths);
     /*
-     * All the routines up to complete only use one of the two handles,
-     * so set size to 0
+     * commands only use one of 2 values, so just swap
+     * positions until all 2 need to be used
      */
-    cmd_auth_array.cmdAuthsCount = 1;
+    TSS2L_SYS_AUTH_COMMAND cmd_auth_array = {
+        1, {
+            ctx.session_data,
+            TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW)
+         },
+    };
 
     unsigned long file_size = 0;
 
@@ -105,12 +100,18 @@ static TSS2_RC tpm_pcrevent_file(TSS2_SYS_CONTEXT *sapi_context,
         res = files_read_bytes(ctx.input, buffer.buffer, buffer.size);
         if (!res) {
             LOG_ERR("Error reading input file!");
-            return TSS2_APP_PCREVENT_RC_FAILED;
+            return false;
         }
 
-        return TSS2_RETRY_EXP(Tss2_Sys_PCR_Event(sapi_context, ctx.pcr, &cmd_auth_array,
+        TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_PCR_Event(sapi_context, ctx.pcr, &cmd_auth_array,
                 &buffer, result,
                 NULL));
+        if (rval != TSS2_RC_SUCCESS) {
+            LOG_PERR(Tss2_Sys_PCR_Event, rval);
+            return false;
+        }
+
+        return true;
     }
 
     TPMI_DH_OBJECT sequence_handle;
@@ -124,8 +125,8 @@ static TSS2_RC tpm_pcrevent_file(TSS2_SYS_CONTEXT *sapi_context,
     TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_HashSequenceStart(sapi_context, NULL, &nullAuth,
     TPM2_ALG_NULL, &sequence_handle, NULL));
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("Tss2_Sys_HashSequenceStart failed: 0x%X", rval);
-        return rval;
+        LOG_PERR(Tss2_Sys_HashSequenceStart, rval);
+        return false;
     }
 
     /* If we know the file size, we decrement the amount read and terminate the loop
@@ -141,7 +142,7 @@ static TSS2_RC tpm_pcrevent_file(TSS2_SYS_CONTEXT *sapi_context,
      * the sequence auth is used
      * for the update call.
      */
-    swap_auths(all_auths);
+    swap_auths(&cmd_auth_array.auths[0], &cmd_auth_array.auths[1]);
 
     bool done = false;
     while (!done) {
@@ -150,7 +151,7 @@ static TSS2_RC tpm_pcrevent_file(TSS2_SYS_CONTEXT *sapi_context,
                 BUFFER_SIZE(typeof(data), buffer), input);
         if (ferror(input)) {
             LOG_ERR("Error reading from input file");
-            return TSS2_APP_PCREVENT_RC_FAILED;
+            return false;
         }
 
         data.size = bytes_read;
@@ -159,8 +160,8 @@ static TSS2_RC tpm_pcrevent_file(TSS2_SYS_CONTEXT *sapi_context,
         rval = TSS2_RETRY_EXP(Tss2_Sys_SequenceUpdate(sapi_context, sequence_handle,
                 &cmd_auth_array, &data, NULL));
         if (rval != TPM2_RC_SUCCESS) {
-            LOG_ERR("Tss2_Sys_SequenceUpdate failed: 0x%X", rval);
-            return rval;
+            LOG_PERR(Tss2_Sys_SequenceUpdate, rval);
+            return false;
         }
 
         if (use_left) {
@@ -179,7 +180,7 @@ static TSS2_RC tpm_pcrevent_file(TSS2_SYS_CONTEXT *sapi_context,
         bool res = files_read_bytes(input, data.buffer, left);
         if (!res) {
             LOG_ERR("Error reading from input file.");
-            return TSS2_APP_PCREVENT_RC_FAILED;
+            return false;
         }
     } else {
         data.size = 0;
@@ -190,19 +191,24 @@ static TSS2_RC tpm_pcrevent_file(TSS2_SYS_CONTEXT *sapi_context,
      * and update the size to 2, as complete needs both the PCR
      * and the sequence auths.
      */
-    swap_auths(all_auths);
-    cmd_auth_array.cmdAuthsCount = 2;
+    swap_auths(&cmd_auth_array.auths[0], &cmd_auth_array.auths[1]);
+    cmd_auth_array.count = 2;
 
-    return TSS2_RETRY_EXP(Tss2_Sys_EventSequenceComplete(sapi_context, ctx.pcr,
+    rval = TSS2_RETRY_EXP(Tss2_Sys_EventSequenceComplete(sapi_context, ctx.pcr,
             sequence_handle, &cmd_auth_array, &data, result, NULL));
+    if (rval != TSS2_RC_SUCCESS) {
+        LOG_PERR(Tss2_Sys_EventSequenceComplete, rval);
+        return false;
+    }
+
+    return true;
 }
 
 static bool do_hmac_and_output(TSS2_SYS_CONTEXT *sapi_context) {
 
     TPML_DIGEST_VALUES digests;
-    TSS2_RC rval = tpm_pcrevent_file(sapi_context, &digests);
-    if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("tpm_pcrevent_file() failed: 0x%X", rval);
+    bool res = tpm_pcrevent_file(sapi_context, &digests);
+    if (!res) {
         return false;
     }
 
@@ -210,7 +216,7 @@ static bool do_hmac_and_output(TSS2_SYS_CONTEXT *sapi_context) {
     for (i = 0; i < digests.count; i++) {
         TPMT_HA *d = &digests.digests[i];
 
-        tpm2_tool_output("%s:", tpm2_alg_util_algtostr(d->hashAlg));
+        tpm2_tool_output("%s: ", tpm2_alg_util_algtostr(d->hashAlg));
 
         BYTE *bytes;
         size_t size;
@@ -305,22 +311,20 @@ static bool on_option(char key, char *value) {
         ctx.flags.i = 1;
         break;
     case 'S': {
-        bool result = tpm2_util_string_to_uint32(value,
-                &ctx.session_data.sessionHandle);
-        if (!result) {
-            LOG_ERR(
-                    "Could not convert session handle to number, got: \"%s\"",
-                    optarg);
+        tpm2_session *s = tpm2_session_restore(value);
+        if (!s) {
             return false;
         }
-    }
+
+        ctx.session_data.sessionHandle = tpm2_session_get_handle(s);
+        tpm2_session_free(&s);
         ctx.flags.S = 1;
-        break;
+    } break;
     case 'P': {
         bool result = tpm2_password_util_from_optarg(value,
                 &ctx.session_data.hmac);
         if (!result) {
-            LOG_ERR("Invalid key handle password, got\"%s\"", optarg);
+            LOG_ERR("Invalid key handle password, got\"%s\"", value);
             return false;
         }
     }
@@ -335,13 +339,13 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     static const struct option topts[] = {
-        { "pcr-index",            required_argument, NULL, 'i' },
-        { "input-session-handle", required_argument, NULL, 'S' },
-        { "password",             required_argument, NULL, 'P' },
+        { "pcr-index", required_argument, NULL, 'i' },
+        { "session",   required_argument, NULL, 'S' },
+        { "passwd",    required_argument, NULL, 'P' },
     };
 
     *opts = tpm2_options_new("i:S:P:", ARRAY_LEN(topts), topts,
-            on_option, on_arg);
+                             on_option, on_arg, 0);
 
     return *opts != NULL;
 }

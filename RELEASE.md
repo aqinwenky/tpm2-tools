@@ -8,7 +8,7 @@ rc series. Releases shall be pushed to branch coverity_scan, to inititiate a sca
 
 An example can be found here:
 
-<https://github.com/01org/tpm2-tools/releases/tag/2.1.0-rc0>
+<https://github.com/tpm2-software/tpm2-tools/releases/tag/2.1.0-rc0>
 
 Release candidates will also be announced on the
 [mailing list](https://lists.01.org/mailman/listinfo/tpm2). When a rc has gone 1
@@ -88,6 +88,12 @@ Push the tag to the repo:
 $ git push origin [signed-tag-name]
 ```
 **NOTE**: this assumes origin is the tpm2-tools official repo.
+
+## Testing
+The tools code **MUST** pass the travis CI testing and have a clean
+coverity scan result performed on every release. The CI testing not
+only tests for valid outputs, but also runs tests uses clang's asan
+feature to detect memory corruption issues.
 
 ### Making a GitHub release.
 

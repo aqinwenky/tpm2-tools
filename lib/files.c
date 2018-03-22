@@ -32,9 +32,10 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 
-#include <sapi/tpm20.h>
-#include <sapi/tss2_mu.h>
+#include <tss2/tss2_sys.h>
+#include <tss2/tss2_mu.h>
 
 #include "files.h"
 #include "log.h"
@@ -154,22 +155,13 @@ bool files_save_bytes_to_file(const char *path, UINT8 *buf, UINT16 size) {
 #define CONTEXT_VERSION 1
 
 bool files_save_tpm_context_to_file(TSS2_SYS_CONTEXT *sysContext, TPM2_HANDLE handle,
-        const char *path) {
+        FILE *stream) {
 
     TPMS_CONTEXT context;
 
     TSS2_RC rval = Tss2_Sys_ContextSave(sysContext, handle, &context);
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR(
-                "Tss2_Sys_ContextSave: Saving handle 0x%x context failed. TPM Error:0x%x",
-                handle, rval);
-        return false;
-    }
-
-    FILE *f = fopen(path, "w+b");
-    if (!f) {
-        LOG_ERR("Error opening file \"%s\" due to error: %s", path,
-                strerror(errno));
+        LOG_PERR(Tss2_Sys_ContextSave, rval);
         return false;
     }
 
@@ -182,63 +174,71 @@ bool files_save_tpm_context_to_file(TSS2_SYS_CONTEXT *sysContext, TPM2_HANDLE ha
      * U16 contextBlobLength
      * BYTE[] contextBlob
      */
-    bool result = files_write_header(f, CONTEXT_VERSION);
+    bool result = files_write_header(stream, CONTEXT_VERSION);
     if (!result) {
-        LOG_ERR("Could not write header for file: \"%s\"", path);
+        LOG_ERR("Could not write context file header");
         goto out;
     }
 
     // UINT32
-    result = files_write_32(f, context.hierarchy);
+    result = files_write_32(stream, context.hierarchy);
     if (!result) {
-        LOG_ERR("Could not write hierarchy for file: \"%s\"", path);
+        LOG_ERR("Could not write hierarchy");
         goto out;
     }
 
-    result = files_write_32(f, context.savedHandle);
+    result = files_write_32(stream, context.savedHandle);
     if (!result) {
-        LOG_ERR("Could not write savedHandle for file: \"%s\"", path);
+        LOG_ERR("Could not write savedHandle");
         goto out;
     }
 
     // UINT64
-    result = files_write_64(f, context.sequence);
+    result = files_write_64(stream, context.sequence);
     if (!result) {
-        LOG_ERR("Could not write sequence for file: \"%s\"", path);
+        LOG_ERR("Could not write sequence");
         goto out;
     }
 
     // U16 LENGTH
-    result = files_write_16(f, context.contextBlob.size);
+    result = files_write_16(stream, context.contextBlob.size);
     if (!result) {
-        LOG_ERR("Could not write contextBob size file: \"%s\"", path);
+        LOG_ERR("Could not write contextBob size");
         goto out;
     }
 
     // BYTE[] contextBlob
-    result = files_write_bytes(f, context.contextBlob.buffer,
+    result = files_write_bytes(stream, context.contextBlob.buffer,
             context.contextBlob.size);
     if (!result) {
-        LOG_ERR("Could not write contextBlob buffer for file: \"%s\"", path);
+        LOG_ERR("Could not write contextBlob buffer");
     }
     /* result is set by file_write_bytes() */
 
 out:
-    fclose(f);
     return result;
 }
 
-bool files_load_tpm_context_from_file(TSS2_SYS_CONTEXT *sapi_context,
-        TPM2_HANDLE *handle, const char *path) {
+bool files_save_tpm_context_to_path(TSS2_SYS_CONTEXT *sysContext, TPM2_HANDLE handle,
+        const char *path) {
 
-    TSS2_RC rval;
-
-    FILE *f = fopen(path, "rb");
+    FILE *f = fopen(path, "w+b");
     if (!f) {
         LOG_ERR("Error opening file \"%s\" due to error: %s", path,
                 strerror(errno));
         return false;
     }
+
+    bool result = files_save_tpm_context_to_file(sysContext, handle, f);
+    fclose(f);
+    return result;
+}
+
+
+bool files_load_tpm_context_from_file(TSS2_SYS_CONTEXT *sapi_context,
+        TPM2_HANDLE *handle, FILE *fstream) {
+
+    TSS2_RC rval;
 
     /*
      * Reading the TPMS_CONTEXT structure to disk, format:
@@ -251,15 +251,15 @@ bool files_load_tpm_context_from_file(TSS2_SYS_CONTEXT *sapi_context,
      */
     UINT32 version;
     TPMS_CONTEXT context;
-    bool result = files_read_header(f, &version);
+    bool result = files_read_header(fstream, &version);
     if (!result) {
         LOG_WARN(
-                "The tpm context file \"%s\" does not appear in the proper format, assuming old format, this will be converted on the next save.",
-                path);
-        rewind(f);
-        result = files_read_bytes(f, (UINT8 *) &context, sizeof(context));
+            "The loaded tpm context does not appear to be in the proper format,"
+            "assuming old format, this will be converted on the next save.");
+        rewind(fstream);
+        result = files_read_bytes(fstream, (UINT8 *) &context, sizeof(context));
         if (!result) {
-            LOG_ERR("Could not load file \"%s\" into tpm context", path);
+            LOG_ERR("Could not load tpm context file");
             goto out;
         }
         /* Success load the context into the TPM */
@@ -273,25 +273,25 @@ bool files_load_tpm_context_from_file(TSS2_SYS_CONTEXT *sapi_context,
         goto out;
     }
 
-    result = files_read_32(f, &context.hierarchy);
+    result = files_read_32(fstream, &context.hierarchy);
     if (!result) {
         LOG_ERR("Error reading hierarchy!");
         goto out;
     }
 
-    result = files_read_32(f, &context.savedHandle);
+    result = files_read_32(fstream, &context.savedHandle);
     if (!result) {
         LOG_ERR("Error reading savedHandle!");
         goto out;
     }
 
-    result = files_read_64(f, &context.sequence);
+    result = files_read_64(fstream, &context.sequence);
     if (!result) {
         LOG_ERR("Error reading sequence!");
         goto out;
     }
 
-    result = files_read_16(f, &context.contextBlob.size);
+    result = files_read_16(fstream, &context.contextBlob.size);
     if (!result) {
         LOG_ERR("Error reading contextBlob.size!");
         goto out;
@@ -306,7 +306,7 @@ bool files_load_tpm_context_from_file(TSS2_SYS_CONTEXT *sapi_context,
         goto out;
     }
 
-    result = files_read_bytes(f, context.contextBlob.buffer,
+    result = files_read_bytes(fstream, context.contextBlob.buffer,
             context.contextBlob.size);
     if (!result) {
         LOG_ERR("Error reading contextBlob.size!");
@@ -316,7 +316,7 @@ bool files_load_tpm_context_from_file(TSS2_SYS_CONTEXT *sapi_context,
 load_to_tpm:
     rval = Tss2_Sys_ContextLoad(sapi_context, &context, handle);
     if (rval != TPM2_RC_SUCCESS) {
-        LOG_ERR("ContextLoad Error. TPM Error:0x%x", rval);
+        LOG_PERR(Tss2_Sys_ContextLoad, rval);
         result = false;
         goto out;
     }
@@ -324,6 +324,21 @@ load_to_tpm:
     result = true;
 
 out:
+    return result;
+}
+
+bool files_load_tpm_context_from_path(TSS2_SYS_CONTEXT *sapi_context,
+        TPM2_HANDLE *handle, const char *path) {
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        LOG_ERR("Error opening file \"%s\" due to error: %s", path,
+                strerror(errno));
+        return false;
+    }
+
+    bool result = files_load_tpm_context_from_file(sapi_context, handle, f);
+
     fclose(f);
     return result;
 }
@@ -620,3 +635,6 @@ LOAD_TYPE(TPM2B_SENSITIVE, sensitive)
 
 SAVE_TYPE(TPMT_TK_HASHCHECK, validation)
 LOAD_TYPE(TPMT_TK_HASHCHECK, validation)
+
+SAVE_TYPE(TPM2B_PRIVATE, private)
+LOAD_TYPE(TPM2B_PRIVATE, private)

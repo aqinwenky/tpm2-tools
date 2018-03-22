@@ -43,9 +43,9 @@ The key referenced by keyHandle is **required** to be:
 
     Output file path, record the decrypted data.
 
-  * **-S**, **--input-session-handle**=_SESSION\_HANDLE_:
+  * **-S**, **--session**=_SESSION\_FILE_:
 
-    Optional Input session handle from a policy session for authorization.
+    Optional, A session file from **tpm2_startauthsession**(1)'s **-S** option.
 
 [common options](common/options.md)
 
@@ -63,10 +63,4 @@ tpm2_rsadecrypt -k 0x81010001 -I encrypted.in -o plain.out
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
+[footer](common/footer.md)

@@ -31,18 +31,22 @@
 
 #include <stdbool.h>
 
-#include <sapi/tpm20.h>
+#include <tss2/tss2_sys.h>
 
 #include "log.h"
 #include "tpm2_options.h"
+#include "tpm2_session.h"
 #include "tpm2_util.h"
 
 struct tpm_flush_context_ctx {
     UINT32 property;
     TPM2_HANDLE objectHandle;
+    struct {
+        char *path;
+    } session;
 };
 
-static struct tpm_flush_context_ctx ctx = { .property = -1, };
+static struct tpm_flush_context_ctx ctx;
 
 static const char *get_property_name(TPM2_HANDLE handle) {
 
@@ -62,22 +66,20 @@ static TSS2_RC
 get_capability_handles(TSS2_SYS_CONTEXT *sapi_ctx, UINT32 property,
                        TPMS_CAPABILITY_DATA *capability_data) {
 
-    TSS2_RC rc;
     TPMI_YES_NO more_data;
 
-    rc = Tss2_Sys_GetCapability(sapi_ctx, NULL, TPM2_CAP_HANDLES, property,
+    TSS2_RC rval = Tss2_Sys_GetCapability(sapi_ctx, NULL, TPM2_CAP_HANDLES, property,
                                 TPM2_MAX_CAP_HANDLES, &more_data,
                                 capability_data,
                                 NULL);
-    if (rc != TSS2_RC_SUCCESS) {
-        LOG_ERR("Failed to GetCapability: capability: 0x%x, property: 0x%x, "
-                "TSS2_RC: 0x%x", TPM2_CAP_HANDLES, property, rc);
-    } else if (more_data == YES) {
+    if (rval != TSS2_RC_SUCCESS) {
+        LOG_PERR(Tss2_Sys_GetCapability, rval);
+    } else if (more_data) {
         LOG_WARN("More data to be queried: capability: 0x%x, property: "
                  "0x%x", TPM2_CAP_HANDLES, property);
     }
 
-    return rc;
+    return rval;
 }
 
 static bool flush_contexts(TSS2_SYS_CONTEXT *sapi_context, TPM2_HANDLE handles[],
@@ -86,12 +88,12 @@ static bool flush_contexts(TSS2_SYS_CONTEXT *sapi_context, TPM2_HANDLE handles[]
     UINT32 i;
 
     for (i = 0; i < count; ++i) {
-        TPM2_RC rc;
 
-        rc = Tss2_Sys_FlushContext(sapi_context, handles[i]);
-        if (rc != TPM2_RC_SUCCESS) {
-            LOG_ERR("Failed Flush Context for %s handle 0x%x, TSS2_RC: 0x%x",
-                    get_property_name(handles[i]), handles[i], rc);
+        TPM2_RC rval = Tss2_Sys_FlushContext(sapi_context, handles[i]);
+        if (rval != TPM2_RC_SUCCESS) {
+            LOG_ERR("Failed Flush Context for %s handle 0x%x",
+                    get_property_name(handles[i]), handles[i]);
+            LOG_PERR(Tss2_Sys_FlushContext, rval);
             return false;
         }
     }
@@ -109,7 +111,6 @@ static bool on_option(char key, char *value) {
         if (!result) {
             return false;
         }
-        ctx.property = 0;
         break;
     case 't':
         ctx.property = TPM2_TRANSIENT_FIRST;
@@ -120,6 +121,9 @@ static bool on_option(char key, char *value) {
     case 's':
         ctx.property = TPM2_ACTIVE_SESSION_FIRST;
         break;
+    case 'S':
+        ctx.session.path = value;
+    break;
     }
 
     return true;
@@ -128,14 +132,15 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     static const struct option topts[] = {
-        { "handle",           no_argument, NULL, 'H' },
-        { "transient-object", no_argument, NULL, 't' },
-        { "loaded-session",   no_argument, NULL, 'l' },
-        { "saved-session",    no_argument, NULL, 's' },
+        { "handle",           no_argument,        NULL, 'H' },
+        { "transient-object", no_argument,        NULL, 't' },
+        { "loaded-session",   no_argument,        NULL, 'l' },
+        { "saved-session",    no_argument,        NULL, 's' },
+        { "session",          required_argument,  NULL, 'S' },
     };
 
-    *opts = tpm2_options_new("H:tls", ARRAY_LEN(topts), topts,
-                             on_option, NULL);
+    *opts = tpm2_options_new("H:tlsS:", ARRAY_LEN(topts), topts,
+                             on_option, NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }
@@ -143,11 +148,6 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
 int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
     UNUSED(flags);
-
-    if (ctx.property == (UINT32)-1) {
-        LOG_ERR("Expected options H, t, l or s");
-        return false;
-    }
 
     TPMS_CAPABILITY_DATA capability_data = TPMS_CAPABILITY_DATA_EMPTY_INIT;
     TPML_HANDLE *handles = &capability_data.data.handles;
@@ -160,6 +160,19 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
             return 1;
         }
     } else {
+
+        /* handle from a session file */
+        if (ctx.session.path) {
+            tpm2_session *s = tpm2_session_restore(ctx.session.path);
+            if (!s) {
+                return 1;
+            }
+
+            ctx.objectHandle = tpm2_session_get_handle(s);
+
+            tpm2_session_free(&s);
+        }
+
         handles->handle[0] = ctx.objectHandle;
         handles->count = 1;
     }

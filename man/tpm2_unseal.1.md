@@ -34,19 +34,26 @@ alive and pass that session using the **--input-session-handle** option.
     Specifies the password of _ITEM\_HANDLE_. Passwords should follow the
     password formatting standards, see section "Password Formatting".
 
-  * **-o**, **--outfile**=_OUT\_FILE_:
+  * **-o**, **--out-file**=_OUT\_FILE_:
 
     Output file name, containing the unsealed data. Defaults to stdout if not specified.
 
-  * **-S**, **--input-session-handle**=_SESSION\_HANDLE_:
+## Session Options
 
-    Optional Input session handle from a policy session for authorization.
+  Options used for controlling sessions and policy events.
+
+  * **-S**, **--session**=_SESSION\_FILE_:
+
+    Optional, A session file from **tpm2_startauthsession**(1)'s **-S** option. This session
+    is used in lieu of starting a session and using the PCR policy options. **-L** is
+    mutually exclusive of this option.
 
   * **-L**, **--set-list**==_PCR\_SELECTION\_LIST_:
 
     The list of pcr banks and selected PCRs' ids.
     _PCR\_SELECTION\_LIST_ values should follow the
     pcr bank specifiers standards, see section "PCR Bank Specfiers".
+    **-S** is mutually exclusive of this option.
 
   * **-F**,**--pcr-input-file=_PCR\_INPUT\_FILE_
 
@@ -74,10 +81,4 @@ tpm2_unseal -c item.context -L sha1:0,1,2 -F out.dat
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
+[footer](common/footer.md)

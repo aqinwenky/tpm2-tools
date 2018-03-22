@@ -23,17 +23,20 @@ If _FILE_ is not specified, it defaults to stdin.
   * **-o**, **--offset**=_OFFSET_:
     The offset within the NV index to start writing at.
 
-  * **-a**, **--auth-handle**=_SECRET\_DATA\_FILE_:
-    specifies the handle used to authorize:
-    * **0x40000001** for **TPM_RH_OWNER**
-    * **0x4000000C** for **TPM_RH_PLATFORM**
+  * **-a**, **--auth-handle**=_AUTH_:
+    specifies the handle used to authorize.
+    Supported options are:
+      * **o** for **TPM_RH_OWNER**
+      * **p** for **TPM_RH_PLATFORM**
+      * **`<num>`** where a raw number can be used.
 
   * **-P**, **--handle-passwd**=_HANDLE\_PASSWORD_:
     specifies the password of authHandle. Passwords should follow the
     "password formatting standards, see section "Password Formatting".
 
-  * **-S**, **--input-session-handle**=_SIZE_:
-    Optional Input session handle from a policy session for authorization.
+  * **-S**, **--session**=_SESSION\_FILE_:
+
+    Optional, A session file from **tpm2_startauthsession**(1)'s **-S** option.
 
   * **-L**, **--set-list**==_PCR\_SELECTION\_LIST_:
 
@@ -64,10 +67,4 @@ tpm2_nvwrite -x 0x1500016 -a 0x40000001 -f nv.data
 
 0 on success or 1 on failure.
 
-# BUGS
-
-[Github Issues](https://github.com/01org/tpm2-tools/issues)
-
-# HELP
-
-See the [Mailing List](https://lists.01.org/mailman/listinfo/tpm2)
+[footer](common/footer.md)

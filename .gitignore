@@ -19,3 +19,6 @@ missing
 Makefile
 Makefile.in
 test-driver
+# dist tarball
+*.gz
+src_vars.mk
