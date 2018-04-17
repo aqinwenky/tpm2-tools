@@ -20,20 +20,23 @@ server.
 
 # OPTIONS
 
-  * **-e**, **--endorse-passwd**=_ENDORSE\_PASSWORD_:
-    specifies current endorse password (string, optional,default:NULL).
+  * **-e**, **--auth-endorse**=_ENDORSE\_AUTH_:
+    Specifies current endorsement authorization.
+    authorizations should follow the "authorization formatting standards, see section
+    "Authorization Formatting".
 
-  * **-o**, **--owner-passwd**=_OWNER\_PASSWORD_:
-    specifies current owner password (string, optional,default:NULL).
+  * **-P**, **--auth-ek**=_EK\_AUTH_
+    Specifies the EK authorization when created.
+    Same formatting as the endorse authorization value or **-e** option.
 
-  * **-P**, **--ek-passwd**=_EK\_PASSWORD_:
-    specifies the EK password when created (string,optional,default:NULL).
-
-    Passwords should follow the password formatting standards, see
-    section "Password Formatting".
+  * **-o**, **--auth-owner**=_OWNER\_AUTH_
+    Specifies the current owner authorization.
+    Same formatting as the endorse password value or **-e** option.
 
   * **-H**, **--handle**=_HANDLE_:
     specifies the handle used to make EK  persistent (hex).
+    If a value of **-** is passed the tool will find a vacant persistent handle
+    to use and print out the automatically selected handle.
 
   * **-g**, **--algorithm**=_ALGORITHM_:
     specifies the algorithm type of EK.
@@ -69,7 +72,7 @@ server.
 
 [common tcti options](common/tcti.md)
 
-[password formatting](common/password.md)
+[authorization formatting](common/password.md)
 
 [supported public object algorithms](common/object-alg.md)
 

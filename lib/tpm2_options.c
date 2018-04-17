@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, Intel Corporation
+ * Copyright (c) 2016-2018, Intel Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -51,7 +51,7 @@
   #define VERSION "UNKNOWN"
 #endif
 
-#define TPM2TOOLS_ENV_TCTI_NAME      "TPM2TOOLS_TCTI_NAME"
+#define TPM2TOOLS_ENV_TCTI      "TPM2TOOLS_TCTI"
 #define TPM2TOOLS_ENV_ENABLE_ERRATA  "TPM2TOOLS_ENABLE_ERRATA"
 
 tpm2_options *tpm2_options_new(const char *short_opts, size_t len,
@@ -104,7 +104,7 @@ bool tpm2_options_cat(tpm2_options **dest, tpm2_options *src) {
 
     d->short_opts = tmp_short;
 
-    /* now move the eclosing structure */
+    /* now move the enclosing structure */
     size_t long_opts_len = d->len + src->len;
     /* +1 for a terminating NULL at the end of options array for getopt_long */
     tpm2_options *tmp = realloc(d, sizeof(*d) + ((long_opts_len + 1) * sizeof(d->long_opts[0])));
@@ -121,7 +121,7 @@ bool tpm2_options_cat(tpm2_options **dest, tpm2_options *src) {
 
     memcpy(&d->long_opts[d->len], src->long_opts, src->len * sizeof(src->long_opts[0]));
 
-    /* length must be updated post memcpy as we need d->len to be the original offest */
+    /* length must be updated post memcpy as we need d->len to be the original offset */
     d->len = long_opts_len;
 
     /* NULL term for getopt_long */
@@ -145,16 +145,36 @@ static inline const char *fixup_name(const char *name) {
     return !strcmp(name, "abrmd") ? "tabrmd" : name;
 }
 
+static const char *find_default_tcti(void) {
+
+    const char *defaults[] = {
+        "tabrmd",
+        "device",
+        "mssim"
+    };
+
+    size_t i;
+    for(i=0; i < ARRAY_LEN(defaults); i++) {
+        const char *name = defaults[i];
+        bool is_present = tpm2_tcti_ldr_is_tcti_present(name);
+        if (is_present) {
+            return name;
+        }
+    }
+
+    return NULL;
+}
+
 static tcti_conf tcti_get_config(const char *optstr) {
 
     /* set up the default configuration */
     tcti_conf conf = {
-        .name = "tabrmd"
+        .name = find_default_tcti()
     };
 
     /* no tcti config supplied, get it from env */
     if (!optstr) {
-        optstr = getenv (TPM2TOOLS_ENV_TCTI_NAME);
+        optstr = getenv (TPM2TOOLS_ENV_TCTI);
         if (!optstr) {
             /* nothing user supplied, use default */
             return conf;
@@ -229,12 +249,20 @@ static bool execute_man(char *prog_name) {
 }
 
 static void show_version (const char *name) {
-#ifndef DISABLE_DLCLOSE
-    printf("tool=\"%s\" version=\"%s\" tctis=\"dynamic\"\n", name, VERSION);
+
+#ifdef DISABLE_DLCLOSE
+    char *dlconfig="disabled";
 #else
-    printf("tool=\"%s\" version=\"%s\" tctis=\"dynamic\" dlclose=disabled\n",
-            name, VERSION);
+    char *dlconfig="enabled";
 #endif
+
+    const char *tcti_default = find_default_tcti();
+    if (!tcti_default) {
+        tcti_default = "none";
+    }
+
+    printf("tool=\"%s\" version=\"%s\" tctis=\"dynamic\" tcti-default=%s dlclose=%s\n",
+            name, VERSION, tcti_default, dlconfig);
 }
 
 void tpm2_print_usage(const char *command, struct tpm2_options *tool_opts) {
@@ -280,9 +308,9 @@ tpm2_option_code tpm2_handle_options (int argc, char **argv,
     struct option long_options [] = {
         { "tcti",          required_argument, NULL, 'T' },
         { "help",          no_argument,       NULL, 'h' },
-        { "verbose",       no_argument,       NULL, 'v' },
+        { "verbose",       no_argument,       NULL, 'V' },
         { "quiet",         no_argument,       NULL, 'Q' },
-        { "version",       no_argument,       NULL, 'V' },
+        { "version",       no_argument,       NULL, 'v' },
         { "enable-errata", no_argument,       NULL, 'Z' },
     };
 
@@ -338,7 +366,7 @@ tpm2_option_code tpm2_handle_options (int argc, char **argv,
         case '?':
             goto out;
         default:
-            /* NULL on_opt handler and unkown option specified is an error */
+            /* NULL on_opt handler and unknown option specified is an error */
             if (!tool_opts || !tool_opts->callbacks.on_opt) {
                 LOG_ERR("Unknown options found: %c", c);
                 goto out;

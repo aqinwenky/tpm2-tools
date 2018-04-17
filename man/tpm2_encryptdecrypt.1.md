@@ -23,10 +23,10 @@ specified symmetric key.
   * **-c**, **--key-context**=_KEY\_CONTEXT\_FILE_:
     filename of the key context used for the  operation.
 
-  * **-P**, **--pwdk**=_KEY\_PASSWORD_:
-    filename of the key context used for the  operation.
-    The password for parent key, optional. Passwords should follow the
-    "password formatting standards, see section "Password Formatting".
+  * **-P**, **--auth-key**=_KEY\_AUTH_:
+    Optional authorization value to use the key specified by **-k**.
+    Authorization values should follow the authorization formatting standards,
+    see section "Authorization Formatting".
 
   * **-D**, **--decrypt**:
     Perform a decrypt operation. Default is encryption.
@@ -43,14 +43,14 @@ specified symmetric key.
 
 [common tcti options](common/tcti.md)
 
-[password formatting](common/password.md)
+[authorization formatting](common/password.md)
 
 # EXAMPLES
 
 ```
-tpm2_encryptdecrypt -k 0x81010001 -P abc123 -D NO -I <filePath> -o <filePath>
-tpm2_encryptdecrypt -c key.context -P abc123 -D NO -I <filePath> -o <filePath>
-tpm2_encryptdecrypt -k 0x81010001 -P 123abca -X -D NO -I <filePath> -o <filePath>
+tpm2_encryptdecrypt -k 0x81010001 -P abc123 -I <filePath> -o <filePath>
+tpm2_encryptdecrypt -c key.context -P abc123 -I <filePath> -o <filePath>
+tpm2_encryptdecrypt -k 0x81010001 -P 123abca -X -I <filePath> -o <filePath>
 ```
 
 # RETURNS

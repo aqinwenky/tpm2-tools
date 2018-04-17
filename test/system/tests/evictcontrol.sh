@@ -31,6 +31,8 @@
 # THE POSSIBILITY OF SUCH DAMAGE.
 #;**********************************************************************;
 
+source helpers.sh
+
 onerror() {
     echo "$BASH_COMMAND on line ${BASH_LINENO[0]} failed: $?"
     exit 1
@@ -39,7 +41,7 @@ trap onerror ERR
 
 cleanup() {
   rm -f primary.ctx decrypt.ctx key.pub key.priv key.name decrypt.out \
-        encrypt.out secret.dat key.ctx
+        encrypt.out secret.dat key.ctx evict.log
 }
 trap cleanup EXIT
 
@@ -47,14 +49,27 @@ cleanup
 
 tpm2_clear -Q
 
-tpm2_createprimary -Q -H e -g sha256 -G rsa -C primary.ctx
+tpm2_createprimary -Q -a e -g sha256 -G rsa -C primary.ctx
 
 tpm2_create -Q -g sha256 -G keyedhash -u key.pub -r key.priv  -c primary.ctx
 
 tpm2_load -Q -c primary.ctx  -u key.pub  -r key.priv -n key.name -C key.ctx
 
-tpm2_evictcontrol -Q -A o -c key.ctx -p 0x81010003
+# Load the context into a specific handle, delete it
+tpm2_evictcontrol -Q -c key.ctx -p 0x81010003
 
-tpm2_evictcontrol -Q -A o -H 0x81010003 -p 0x81010003
+tpm2_evictcontrol -Q -H 0x81010003 -p 0x81010003
+
+# Load the context into a specific handle, delete it without an explicit -p
+tpm2_evictcontrol -Q -a o -c key.ctx -p 0x81010003
+
+tpm2_evictcontrol -Q -a o -H 0x81010003
+
+# Load the context into an available handle, delete it
+tpm2_evictcontrol -a o -c key.ctx > evict.log
+phandle=`grep "persistentHandle: " evict.log | awk '{print $2}'`
+tpm2_evictcontrol -Q -a o -H $phandle
+
+yaml_verify evict.log
 
 exit 0

@@ -20,21 +20,23 @@ Refer to:
 
 # OPTIONS
 
-  * **-e**, **--endorse-passwd**=_ENDORSE\_PASSWORD_:
-    Specifies current endorsement password, defaults to NULL.
-    Passwords should follow the "password formatting standards", see section
-    "Password Formatting".
+  * **-e**, **--auth-endorse**=_ENDORSE\_AUTH_:
+    Specifies current endorsement authorization.
+    authorizations should follow the "authorization formatting standards, see section
+    "Authorization Formatting".
 
-  * **-o**, **--owner-passwd**=_OWNER\_PASSWORD_
-    Specifies the current owner password, defaults to NULL.
-    Same formatting as the endorse password value or -e option.
+  * **-P**, **--auth-ek**=_EK\_AUTH_
+    Specifies the EK authorization when created.
+    Same formatting as the endorse authorization value or **-e** option.
 
-  * **-P**, **--eKPasswd**=_EK\_PASSWORD_
-    Specifies the EK password when created, defaults to NULL.
-    Same formatting as the endorse password value or -e option.
+  * **-o**, **--auth-owner**=_OWNER\_AUTH_
+    Specifies the current owner authorization.
+    Same formatting as the endorse password value or **-e** option.
 
   * **-H**, **--handle**=_HANDLE_:
-    Optional, specifies the handle used to make EK  persistent (hex).
+    Optional, specifies the handle used to make EK persistent (hex).
+    If a value of **-** is passed the tool will find a vacant persistent handle
+    to use and print out the automatically selected handle.
 
   * **-c**, **--context**=_PATH_:
     Optional, specifies a path to save the context of the EK handle. If one saves

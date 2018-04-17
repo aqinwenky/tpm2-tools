@@ -30,24 +30,26 @@ loaded-key:
 
 # OPTIONS
 
-  * **-e**, **--endorse-passwd**=_ENDORSE\_PASSWORD_:
-    Specifies current endorsement password, defaults to NULL.
-    Passwords should follow the "password formatting standards, see section
-    "Password Formatting".
+  * **-e**, **--auth-endorse**=_ENDORSE\_AUTH_:
+    Specifies current endorsement authorization.
+    authorizations should follow the "authorization formatting standards, see section
+    "Authorization Formatting".
 
-  * **-P**, **--ak-passwd**=_AK\_PASSWORD_
-    Specifies the AK password when created, defaults to NULL.
-    Same formatting as the endorse password value or -e option.
+  * **-P**, **--auth-ak**=_AK\_AUTH_
+    Specifies the AK authorization when created.
+    Same formatting as the endorse authorization value or **-e** option.
 
-  * **-o**, **--owner-passwd**=_OWNER\_PASSWORD_
-    Specifies the current owner password, defaults to NULL.
-    Same formatting as the endorse password value or -e option.
+  * **-o**, **--auth-owner**=_OWNER\_AUTH_
+    Specifies the current owner authorization.
+    Same formatting as the endorse password value or **-e** option.
 
   * **-E**, **--ek-handle**=_EK\_HANDLE_:
-    Specifies the handle used to make EK persistent.
+    Specifies the persistent handle of the EK.
 
   * **-k**, **--ak-handle**=_AK\_HANDLE_:
     Specifies the handle used to make AK persistent.
+    If a value of **-** is passed the tool will find a vacant persistent handle
+    to use and print out the automatically selected handle.
 
   * **-c**, **--context**=_PATH_:
     Optional, specifies a path to save the context of the AK handle. If one saves
@@ -56,13 +58,21 @@ loaded-key:
 
   * **-g**, **--algorithm**=_ALGORITHM_:
     Specifies the algorithm type of AK. Algorithms should follow the
-    " formatting standards, see section "Algorithm Specifiers".
+    "formatting standards", see section "Algorithm Specifiers".
     See section "Supported Public Object Algorithms" for a list of supported
     object algorithms.
 
-  * **-D**, **--digest-alg**=_ALGORITHM_:
-    Like -g, but specifies the algorithm of sign.
-    See section "Supported Signing Algorithms" for details.
+  * **-D**, **--digest-alg**=_HASH\_ALGORITHM_:
+    Like -g, but specifies the digest algorithm. Algorithms should follow the
+    "formatting standards", see section "Algorithm Specifiers".
+    See section "Supported Hash Algorithms" for a list of supported hash
+    algorithms.
+
+  * **-s**, **--sign-alg**=_SIGN\_ALGORITHM_:
+    Like -g but specifies signing algorithm. Algorithms should follow the
+    "formatting standards", see section "Algorithm Specifiers".
+    See section "Supported Signing Algorithms" for a list of supported
+    signing algorithms.
 
   * **-p**, **--file**=_FILE_:
     Specifies the file used to save the public portion of AK. This will be a
@@ -83,11 +93,13 @@ loaded-key:
 
 [common tcti options](common/tcti.md)
 
-[password formatting](common/password.md)
+[authorization formatting](common/authorizations.md)
 
 [supported signing algorithms](common/sign-alg.md)
 
 [supported public object algorithms](common/object-alg.md)
+
+[supported hash algorithms](common/hash.md)
 
 [algorithm specifiers](common/alg.md)
 

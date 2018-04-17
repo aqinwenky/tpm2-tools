@@ -45,6 +45,7 @@
 #include "tpm2_options.h"
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
+#include "tpm2_hierarchy.h"
 
 typedef struct tpm_hash_ctx tpm_hash_ctx;
 struct tpm_hash_ctx {
@@ -56,39 +57,9 @@ struct tpm_hash_ctx {
 };
 
 static tpm_hash_ctx ctx = {
-    .hierarchyValue = TPM2_RH_NULL,
+    .hierarchyValue = TPM2_RH_OWNER,
     .halg = TPM2_ALG_SHA1,
 };
-
-static bool get_hierarchy_value(const char *hiearchy_code,
-        TPMI_RH_HIERARCHY *hierarchy_value) {
-
-    size_t len = strlen(hiearchy_code);
-    if (len != 1) {
-        LOG_ERR("Hierarchy Values are single characters, got: %s",
-                hiearchy_code);
-        return false;
-    }
-
-    switch (hiearchy_code[0]) {
-    case 'e':
-        *hierarchy_value = TPM2_RH_ENDORSEMENT;
-        break;
-    case 'o':
-        *hierarchy_value = TPM2_RH_OWNER;
-        break;
-    case 'p':
-        *hierarchy_value = TPM2_RH_PLATFORM;
-        break;
-    case 'n':
-        *hierarchy_value = TPM2_RH_NULL;
-        break;
-    default:
-        LOG_ERR("Unknown hierarchy value: %s", hiearchy_code);
-        return false;
-    }
-    return true;
-}
 
 static bool hash_and_save(TSS2_SYS_CONTEXT *sapi_context) {
 
@@ -154,8 +125,9 @@ static bool on_option(char key, char *value) {
 
     bool res;
     switch (key) {
-    case 'H':
-        res = get_hierarchy_value(value, &ctx.hierarchyValue);
+    case 'a':
+        res = tpm2_hierarchy_from_optarg(value, &ctx.hierarchyValue,
+                TPM2_HIERARCHY_FLAGS_ALL);
         if (!res) {
             return false;
         }
@@ -180,7 +152,7 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     static struct option topts[] = {
-        {"hierarchy", required_argument, NULL, 'H'},
+        {"hierarchy", required_argument, NULL, 'a'},
         {"halg",      required_argument, NULL, 'g'},
         {"out-file",  required_argument, NULL, 'o'},
         {"ticket",    required_argument, NULL, 't'},
@@ -189,7 +161,7 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
     /* set up non-static defaults here */
     ctx.input_file = stdin;
 
-    *opts = tpm2_options_new("H:g:o:t:", ARRAY_LEN(topts), topts, on_option,
+    *opts = tpm2_options_new("a:g:o:t:", ARRAY_LEN(topts), topts, on_option,
                              on_args, 0);
 
     return *opts != NULL;

@@ -58,7 +58,6 @@
 #define max_buffer_size  1024
 
 #define RSA_2K_MODULUS_SIZE_IN_BYTES 256
-#define RSA_2K_PUBLIC_MODULUS_OFFSET 28
 
 typedef struct tpm_import_ctx tpm_import_ctx;
 struct tpm_import_ctx {
@@ -67,8 +66,6 @@ struct tpm_import_ctx {
     char *import_key_private_file;
     char *parent_key_public_file;
     uint8_t input_key_buffer[SYM_KEY_SIZE];
-    //Parent public key for seed encryption
-    TPM2B_PUBLIC_KEY_RSA parent_public_key;
     TPM2_HANDLE parent_key_handle;
     //External key public
     TPM2B_PUBLIC import_key_public;
@@ -94,7 +91,6 @@ struct tpm_import_ctx {
 static tpm_import_ctx ctx = { 
     .input_key_file = NULL, 
     .parent_key_handle = 0,
-    .parent_public_key = TPM2B_INIT(RSA_2K_MODULUS_SIZE_IN_BYTES),
     .import_key_public = TPM2B_TYPE_INIT(TPM2B_PUBLIC, publicArea),
     .import_key_public_name = TPM2B_TYPE_INIT(TPM2B_NAME, name),
     .import_key_private = TPM2B_EMPTY_INIT,
@@ -128,27 +124,26 @@ static int RSA_set0_key(RSA *r, BIGNUM *n, BIGNUM *e, BIGNUM *d) {
 
 static bool encrypt_seed_with_tpm2_rsa_public_key(void) {
     bool rval = false;
-
-    //Public Modulus
-    FILE *fp = fopen(ctx.parent_key_public_file, "rb");
-    if (fp == NULL) {
-        LOG_ERR("Failed accessing parent key public file.");
-        return false;
-    }
-    if (fseek(fp, RSA_2K_PUBLIC_MODULUS_OFFSET, SEEK_SET) != 0) {
-        LOG_ERR("Expected parent key public data file size failure");
-        fclose(fp);
-        return false;
-    }
-    unsigned char pub_modulus[RSA_2K_MODULUS_SIZE_IN_BYTES] = { 0 };
-    int ret = fread(pub_modulus, 1, RSA_2K_MODULUS_SIZE_IN_BYTES, fp);
-    if (ret != RSA_2K_MODULUS_SIZE_IN_BYTES) {
-        LOG_ERR("Failed reading public modulus from parent key public file");
-        fclose(fp);
-        return false;
-    }
-    fclose(fp);
     RSA *rsa = NULL;
+    TPM2B_PUBLIC pub_key = TPM2B_EMPTY_INIT;
+    bool res = files_load_public(ctx.parent_key_public_file, &pub_key);
+
+    if (!res) {
+        LOG_ERR("Failed loading parent key public file.");
+        return false;
+    }
+
+    // Public modulus
+    TPMI_RSA_KEY_BITS mod_size_bits = pub_key.publicArea.parameters.rsaDetail.keyBits;
+    UINT16 mod_size = mod_size_bits / 8;
+    TPM2B *pub_key_val = (TPM2B *)&pub_key.publicArea.unique.rsa;
+    unsigned char *pub_modulus = malloc(mod_size);
+    if (pub_modulus == NULL) {
+        LOG_ERR("Failed to allocate memory to store public key's modulus.");
+        return false;
+    }
+    memcpy(pub_modulus, pub_key_val->buffer, mod_size);
+
     unsigned char encoded[RSA_2K_MODULUS_SIZE_IN_BYTES];
     unsigned char label[10] = { 'D', 'U', 'P', 'L', 'I', 'C', 'A', 'T', 'E', 0 };
     int return_code = RSA_padding_add_PKCS1_OAEP_mgf1(encoded,
@@ -156,24 +151,24 @@ static bool encrypt_seed_with_tpm2_rsa_public_key(void) {
             EVP_sha256(), NULL);
     if (return_code != 1) {
         LOG_ERR("Failed RSA_padding_add_PKCS1_OAEP_mgf1\n");
-        return false;
+        goto error;
     }
     BIGNUM* bne = BN_new();
     if (!bne) {
         LOG_ERR("BN_new for bne failed\n");
-        return false;
+        goto error;
     }
     return_code = BN_set_word(bne, RSA_F4);
     if (return_code != 1) {
         LOG_ERR("BN_set_word failed\n");
         BN_free(bne);
-        return false;
+        goto error;
     }
     rsa = RSA_new();
     if (!rsa) {
         LOG_ERR("RSA_new failed\n");
         BN_free(bne);
-        return false;
+        goto error;
     }
     return_code = RSA_generate_key_ex(rsa, 2048, bne, NULL);
     BN_free(bne);
@@ -202,6 +197,7 @@ static bool encrypt_seed_with_tpm2_rsa_public_key(void) {
     rval = true;
 
 error:
+    free(pub_modulus);
     RSA_free(rsa);
     return rval;
 }
@@ -212,7 +208,9 @@ static void aes_128_cfb_encrypt_buffers(uint8_t *buffer1, uint16_t buffer1_size,
     //AES encryption
     uint8_t to_encrypt_buffer[max_buffer_size];
     memcpy(to_encrypt_buffer, buffer1, buffer1_size);
-    memcpy(to_encrypt_buffer + buffer1_size, buffer2, buffer2_size);
+    if (buffer2 != NULL) {
+        memcpy(to_encrypt_buffer + buffer1_size, buffer2, buffer2_size);
+    }
 
     uint8_t iv_in[SYM_KEY_SIZE] = { 0 };
     AES_KEY aes;

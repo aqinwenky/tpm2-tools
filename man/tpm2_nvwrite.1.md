@@ -24,19 +24,21 @@ If _FILE_ is not specified, it defaults to stdin.
     The offset within the NV index to start writing at.
 
   * **-a**, **--auth-handle**=_AUTH_:
-    specifies the handle used to authorize.
+    specifies the handle used to authorize. Defaults to **o**, **TPM_RH_OWNER**,
+    when no value has been specified.
     Supported options are:
       * **o** for **TPM_RH_OWNER**
       * **p** for **TPM_RH_PLATFORM**
       * **`<num>`** where a raw number can be used.
 
-  * **-P**, **--handle-passwd**=_HANDLE\_PASSWORD_:
-    specifies the password of authHandle. Passwords should follow the
-    "password formatting standards, see section "Password Formatting".
+    **NOTE**: To authorize against the index, specify the index handle as
+    the argument to option **-a**. The index auth value is set via the
+    **-I** option to tpm2_nvdefine(1).
 
-  * **-S**, **--session**=_SESSION\_FILE_:
-
-    Optional, A session file from **tpm2_startauthsession**(1)'s **-S** option.
+  * **-P**, **--auth-hierarchy**=_HIERARCHY\_AUTH_:
+    Specifies the authorization value for the hierarchy. Authorization values
+    should follow the authorization formatting standards, see section
+    "Authorization Formatting".
 
   * **-L**, **--set-list**==_PCR\_SELECTION\_LIST_:
 
@@ -44,7 +46,7 @@ If _FILE_ is not specified, it defaults to stdin.
     _PCR\_SELECTION\_LIST_ values should follow the
     pcr bank specifiers standards, see section "PCR Bank Specfiers".
 
-  * **-F**,**--pcr-input-file=_PCR\_INPUT\_FILE_
+  * **-F**,**--pcr-input-file**=_PCR\_INPUT\_FILE_
 
     Optional Path or Name of the file containing expected pcr values for the specified index.
     Default is to read the current PCRs per the set list.
@@ -53,7 +55,7 @@ If _FILE_ is not specified, it defaults to stdin.
 
 [common tcti options](common/tcti.md)
 
-[password formatting](common/password.md)
+[authorization formatting](common/authorizations.md)
 
 # EXAMPLES
 

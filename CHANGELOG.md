@@ -1,5 +1,46 @@
 ## Changelog
 ### next
+  * tpm2_unseal: Option `--pwdk` changes to `--auth-key`.
+  * tpm2_sign: Option `--pwdk` changes to `--auth-key`.
+  * tpm2_rsadecrypt: Option `--pwdk` changes to `--auth-key`.
+  * tpm2_quote: Option `--ak-passwd` changes to `--auth-ak`
+  * tpm2_pcrevent: Option `--passwd` changes to `--auth-pcr`
+  * tpm2_nvwrite: Options `--authhandle` and `--handle-passwd`
+    changes to `--auth-hierarchy` and `--auth-hierarchy-value` respectively.
+  * tpm2_nvread: Options `--authhandle` and `--handle-passwd`
+    changes to `--auth-hierarchy` and `--auth-hierarchy-value` respectively.
+  * tpm2_nvdefine: Options `--authhandle`, `--handle-passwd` and `--index-passwd`
+    changes to `--auth-hierarchy`, `--auth-hierarchy-value` and `--auth-index`
+    respectively.
+  * tpm2_loadexternal: `-H` changes to `-a` for specifying hierarchy.
+  * tpm2_load: Option `--pwdp` changes to `--auth-parent`.
+  * tpm2_hmac: Option `--pwdk` changes to `--auth-key`.
+  * tpm2_hash: `-H` changes to `-a` for specifying hierarchy.
+  * tpm2_getmanufec: Options `--owner-passwd`, `--endorse-passwd`
+  * and `--ek-passwd`change to `--auth-owner`, `--auth-endorse`
+    and `--auth-ek` respectively.
+  * tpm2_evictcontrol: Option group `-A` and `--auth` changes to `-a` and `--hierarchy`
+    Option `--pwda` changes to `--auth-hierarchy`
+  * tpm2_encryptdecrypt: Option `--pwdk` changes to `--auth-key`.
+  * tpm2_dictionarylockout: Option `--lockout-passwd` changes to `--auth-lockout`
+  * tpm2_createprimary: Options `--pwdp` and `--pwdk` change to
+    `--auth-hierarchy` and `--auth-object` respectively.
+  * tpm2_createek: Options `--owner-passwd`, `--endorse-passwd`
+  * and `--ek-passwd`change to `--auth-owner`, `--auth-endorse`
+    and `--auth-ek` respectively.
+  * tpm2_createak: Options `--owner-passwd`, `--endorse-passwd`
+  * and `--ak-passwd`change to `--auth-owner`, `--auth-endorse`
+    and `--auth-ak` respectively.
+  * tpm2_create: Options `--pwdo` and `--pwdk` change to `--auth-object` and
+    `--auth-key` respectively.
+  * tpm2_clearlock: Option `--lockout-passwd` changes to `--auth-lockout`
+  * tpm2_clear: Option `--lockout-passwd` changes to `--auth-lockout`
+  * tpm2_changeauth: Options, `--old-owner-passwd`, `--old-endorse-passwd`,
+    and `--old-lockout-passwd` go to `--old-auth-owner`, `--old-auth-endorse`,
+    and `--old-auth-lockout` respectively.
+  * tpm2_certify: Options `--pwdo` and `--pwdk` change to `--auth-object` and
+    `--auth-key` respectively.
+  * tpm2_createprimary: `-H` changes to `-a` for specifying hierarchy.
   * tpm2_createak: support for non-persistent AK generation.
   * tpm2_createek: support for non-persistent EK generation.
   * tpm2_getpubak renamed to tpm2_createak, -f becomes -p and -f is used for format of public key
@@ -10,7 +51,7 @@
   * Dynamic TCTIS. Support for pluggable TCTI modules via the -T or --tcti options.
   * tpm2_sign: supports signing a pre-computed hash via -D
   * tpm2_clearlock: tool added
-  * test: system testing scripts moved into subordiante test directory.
+  * test: system testing scripts moved into subordinate test directory.
   * fix a buffer overflow in nvread/write tools.
   * configure: enable code coverage option.
   * tpm2_takeownership: split into tpm2_clear and tpm2_changeauth
@@ -135,7 +176,7 @@
   **Removed**
 
   * Windows related code
-  * depenedency on the TPM2.0-TSS repo source code
+  * dependency on the TPM2.0-TSS repo source code
 
 ### v1.0 - 2015-10-19
 

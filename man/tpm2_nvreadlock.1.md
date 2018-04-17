@@ -22,21 +22,23 @@ is released on subsequent restart of the machine.
 
   * **-a**, **--auth-handle**=_SECRET\_DATA\_FILE_:
     specifies the handle used to authorize:
-    * **0x40000001** for **TPM_RH_OWNER**
-    * **0x4000000C** for **TPM_RH_PLATFORM**
+    * **o** for **TPM_RH_OWNER**
+    * **p** for **TPM_RH_PLATFORM**
+    Defaults to **o**, **TPM_RH_OWNER**, when no value has been
+    specified.
 
   * **-P**, **--handle-passwd**=_HANDLE\_PASSWORD_:
     specifies the password of authHandle. Passwords should follow the
-    "password formatting standards, see section "Password Formatting".
+    "authorization formatting standards, see section "Authorization Formatting".
 
-  * **-S**, **--input-session-handle**=_SIZE_:
-    Optional Input session handle from a policy session for authorization.
+  * **-S**, **--input-session-handle**=_SESSION\_FILE_:
+    Optional, a session file from **tpm2_startauthsession**(1)'s **-S** option.
 
 [common options](common/options.md)
 
 [common tcti options](common/tcti.md)
 
-[password formatting](common/password.md)
+[authorization formatting](common/password.md)
 
 # EXAMPLES
 

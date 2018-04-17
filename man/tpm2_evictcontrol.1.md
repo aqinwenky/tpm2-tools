@@ -17,7 +17,7 @@ be evicted.
 
 # OPTIONS
 
-  * **-A**, **--auth**=_AUTH_:
+  * **-a**, **--hierarchy**=_AUTH\_HIERARCHY\_:
 
     The authorization hierarchy used to authorize the commands. Defaults to the "owner" hierarchy.
     Supported options are:
@@ -29,8 +29,9 @@ be evicted.
 
     The handle of a loaded transient or a persistent object.
 
-    If the handle is for a transient object, then a handle that will be assigned to the persisted
-    object must also be specified with the **-p** option.
+    If the handle is for a transient object it will be persisted, either to the
+    handle specified by the **-p** option, or to the first available vacant
+    persistent handle.
 
     If the handle is for a persistent object, then the **-p** does not need to be provided since the
     handle must be the same for both options.
@@ -43,10 +44,10 @@ be evicted.
 
     The persistent handle for the object handle specified via _HANDLE_.
 
-  * **-P**, **--pwda**=_AUTH\_PASSWORD_:
+  * **-P**, **--auth-hierarchy**=_AUTH\_HIERARCHY_\VALUE_:
 
-    Optional authorization password. Passwords should follow the
-    "password formatting standards, see section "Password Formatting".
+    Optional authorization value. Authorization values should follow the
+    authorization formatting standards, see section "Authorization Formatting".
 
   * **-S**, **--session**=_SESSION\_FILE_:
 
@@ -56,7 +57,7 @@ be evicted.
 
 [common tcti options](common/tcti.md)
 
-[password formatting](common/password.md)
+[authorization formatting](common/password.md)
 
 # EXAMPLES
 

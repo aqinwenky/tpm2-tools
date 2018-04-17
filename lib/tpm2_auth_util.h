@@ -28,56 +28,44 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 //**********************************************************************;
-#include <stdbool.h>
-#include <string.h>
+#ifndef SRC_PASSWORD_UTIL_H_
+#define SRC_PASSWORD_UTIL_H_
 
 #include <tss2/tss2_sys.h>
 
-#include "log.h"
-#include "tpm2_password_util.h"
-#include "tpm2_util.h"
+#include "tpm2_session.h"
 
-#define HEX_PREFIX "hex:"
-#define HEX_PREFIX_LEN sizeof(HEX_PREFIX) - 1
+/**
+ * Convert a password argument to a valid TPM2B_AUTH structure. Passwords can
+ * be specified in two forms: string and hex-string and are identified by a
+ * prefix of str: and hex: respectively. No prefix assumes the str form.
+ *
+ * For example, a string can be specified as:
+ * "1234"
+ * "str:1234"
+ *
+ * And a hexstring via:
+ * "hex:1234abcd"
+ *
+ * Strings are copied verbatim to the TPM2B_AUTH buffer without the terminating NULL byte,
+ * Hex strings differ only from strings in that they are converted to a byte array when
+ * storing. At the end of storing, the size field is set to the size of bytes of the
+ * password.
+ *
+ * If your password starts with a hex: prefix and you need to escape it, just use the string
+ * prefix to escape it, like so:
+ * "str:hex:password"
+ *
+ * @param password
+ *  The optarg containing the password string.
+ * @param dest
+ *  The TPM2B_AUTH structure to copy the string into.
+ * @param session
+ *  If a session is used, returns the session data.
+ * @return
+ *  true on success, false on failure.
+ */
+bool tpm2_auth_util_from_optarg(const char *password, TPMS_AUTH_COMMAND *auth,
+        tpm2_session **session);
 
-#define STR_PREFIX "str:"
-#define STR_PREFIX_LEN sizeof(STR_PREFIX) - 1
-
-bool tpm2_password_util_from_optarg(const char *password, TPM2B_AUTH *dest) {
-
-    bool is_hex = !strncmp(password, HEX_PREFIX, HEX_PREFIX_LEN);
-    if (!is_hex) {
-
-        /* str may or may not have the str: prefix */
-        bool is_str_prefix = !strncmp(password, STR_PREFIX, STR_PREFIX_LEN);
-        if (is_str_prefix) {
-            password += STR_PREFIX_LEN;
-        }
-
-        /*
-         * Per the man page:
-         * "a return value of size or more means that the output was  truncated."
-         */
-        size_t wrote = snprintf((char *)&dest->buffer, BUFFER_SIZE(typeof(*dest), buffer), "%s", password);
-        if (wrote >= BUFFER_SIZE(typeof(*dest), buffer)) {
-            dest->size = 0;
-            return false;
-        }
-
-        dest->size = wrote;
-
-        return true;
-    }
-
-    /* if it is hex, then skip the prefix */
-    password += HEX_PREFIX_LEN;
-
-    dest->size = BUFFER_SIZE(typeof(*dest), buffer);
-    int rc = tpm2_util_hex_to_byte_structure(password, &dest->size, dest->buffer);
-    if (rc) {
-        dest->size = 0;
-        return false;
-    }
-
-    return true;
-}
+#endif /* SRC_PASSWORD_UTIL_H_ */
