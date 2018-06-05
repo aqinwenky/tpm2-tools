@@ -38,7 +38,7 @@ cleanup() {
 
     # Evict persistent handles, we want them to always succeed and never trip
     # the onerror trap.
-    tpm2_evictcontrol -Q -a o -H 0x81010005 2>/dev/null || true
+    tpm2_evictcontrol -Q -a o -c 0x81010005 2>/dev/null || true
 
     if [ "$1" != "no-shut-down" ]; then
       shut_down
@@ -50,12 +50,12 @@ start_up
 
 cleanup "no-shut-down"
 
-tpm2_createek -H 0x81010005 -g rsa -p ek.pub
+tpm2_createek -c 0x81010005 -g rsa -p ek.pub
 
 cleanup "no-shut-down"
 
-tpm2_createek -H - -g rsa -p ek.pub > ek.log
+tpm2_createek -c - -g rsa -p ek.pub > ek.log
 phandle=`yaml_get_kv ek.log \"persistent\-handle\"`
-tpm2_evictcontrol -Q -a o -H $phandle
+tpm2_evictcontrol -Q -a o -c $phandle
 
 exit 0

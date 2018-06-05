@@ -71,7 +71,7 @@ cleanup() {
     # Evict persistent handles, we want them to always succeed and never trip
     # the onerror trap.
     for handle in $handle_ek $handle_ak; do
-        tpm2_evictcontrol -Q -a o -H $handle 2>/dev/null || true
+        tpm2_evictcontrol -Q -a o -c $handle 2>/dev/null || true
     done
 
     shut_down
@@ -82,13 +82,13 @@ start_up
 
 head -c 4096 /dev/random > $file_hash_input
 
-tpm2_createek -Q -g $alg_ek -p "$file_pubek_orig" -H $handle_ek
+tpm2_createek -Q -g $alg_ek -p "$file_pubek_orig" -c $handle_ek
 
 for fmt in tss pem der; do
 
     this_key="${file_pubek_base}.${fmt}"
 
-    tpm2_readpublic -Q -H $handle_ek -f "$fmt" -o "$this_key"
+    tpm2_readpublic -Q -c $handle_ek -f "$fmt" -o "$this_key"
 
     if [ "$fmt" = tss ]; then
         diff "$file_pubek_orig" "$this_key" > /dev/null
@@ -98,15 +98,15 @@ for fmt in tss pem der; do
 
 done
 
-tpm2_createak -Q -g $alg_ak -E $handle_ek -k $handle_ak -p "$file_pubak_tss" -n "$file_pubak_name"
+tpm2_createak -Q -g $alg_ak -C $handle_ek -k $handle_ak -p "$file_pubak_tss" -n "$file_pubak_name"
 
-tpm2_readpublic -Q -H $handle_ak -f "pem" -o "$file_pubak_pem"
+tpm2_readpublic -Q -c $handle_ak -f "pem" -o "$file_pubak_pem"
 
 tpm2_hash -Q -a e -g $alg_hash -t "$file_hash_ticket" -o "$file_hash_result" "$file_hash_input"
 
 for fmt in tss plain; do
     this_sig="${file_sig_base}.${fmt}"
-    tpm2_sign -Q -k $handle_ak -g $alg_hash -m "${file_hash_input}" -f $fmt -s "${this_sig}" -t "${file_hash_ticket}"
+    tpm2_sign -Q -c $handle_ak -g $alg_hash -m "${file_hash_input}" -f $fmt -s "${this_sig}" -t "${file_hash_ticket}"
 
     if [ "$fmt" = plain ]; then
         openssl dgst -verify "$file_pubak_pem" -keyform pem -${alg_hash} -signature "$this_sig" "$file_hash_input" > /dev/null
@@ -115,7 +115,7 @@ done
 
 for fmt in tss plain; do
     this_sig="${file_quote_sig_base}.${fmt}"
-    tpm2_quote -Q -k $handle_ak -l 0 -g "$alg_hash" -f $fmt -m "$file_quote_msg" -s "$this_sig"
+    tpm2_quote -Q -C $handle_ak -l 0 -g "$alg_hash" -f $fmt -m "$file_quote_msg" -s "$this_sig"
 
     if [ "$fmt" = plain ]; then
         openssl dgst -verify "$file_pubak_pem" -keyform pem -${alg_hash} -signature "$this_sig" "$file_quote_msg" > /dev/null

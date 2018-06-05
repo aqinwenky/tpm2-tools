@@ -58,9 +58,9 @@ cleanup() {
     $file_quote_key_name $file_quote_key_ctx ek.pub2 ak.pub2 ak.name_2 \
     $out
 
-    tpm2_evictcontrol -Q -ao -H $Handle_ek_quote 2>/dev/null || true
-    tpm2_evictcontrol -Q -ao -H $Handle_ak_quote 2>/dev/null || true
-    tpm2_evictcontrol -Q -ao -H $Handle_ak_quote2 2>/dev/null || true
+    tpm2_evictcontrol -Q -ao -c $Handle_ek_quote 2>/dev/null || true
+    tpm2_evictcontrol -Q -ao -c $Handle_ak_quote 2>/dev/null || true
+    tpm2_evictcontrol -Q -ao -c $Handle_ak_quote2 2>/dev/null || true
 
     if [ "$1" != "no-shut-down" ]; then
        shut_down
@@ -84,30 +84,30 @@ cleanup "no-shut-down"
 
 tpm2_clear
 
-tpm2_createprimary -Q -a e -g $alg_primary_obj -G $alg_primary_key -C $file_primary_key_ctx
+tpm2_createprimary -Q -a e -g $alg_primary_obj -G $alg_primary_key -o $file_primary_key_ctx
 
-tpm2_create -Q -g $alg_create_obj -G $alg_create_key -u $file_quote_key_pub -r $file_quote_key_priv  -c $file_primary_key_ctx
+tpm2_create -Q -g $alg_create_obj -G $alg_create_key -u $file_quote_key_pub -r $file_quote_key_priv  -C $file_primary_key_ctx
 
-tpm2_load -Q -c $file_primary_key_ctx  -u $file_quote_key_pub  -r $file_quote_key_priv -n $file_quote_key_name -C $file_quote_key_ctx
+tpm2_load -Q -C $file_primary_key_ctx  -u $file_quote_key_pub  -r $file_quote_key_priv -n $file_quote_key_name -o $file_quote_key_ctx
 
-tpm2_quote -c $file_quote_key_ctx  -g $alg_quote -l 16,17,18 -q $nonce > $out
+tpm2_quote -C $file_quote_key_ctx  -g $alg_quote -l 16,17,18 -q $nonce > $out
 
 yaml_verify $out
 
-tpm2_quote -Q -c $file_quote_key_ctx  -L $alg_quote:16,17,18+$alg_quote1:16,17,18 -q $nonce
+tpm2_quote -Q -C $file_quote_key_ctx  -L $alg_quote:16,17,18+$alg_quote1:16,17,18 -q $nonce
 
 #####handle testing
 tpm2_evictcontrol -Q -a o -c $file_quote_key_ctx -p $Handle_ak_quote
 
-tpm2_quote -Q -k $Handle_ak_quote  -g $alg_quote -l 16,17,18 -q $nonce
+tpm2_quote -Q -C $Handle_ak_quote  -g $alg_quote -l 16,17,18 -q $nonce
 
-tpm2_quote -Q -k $Handle_ak_quote  -L $alg_quote:16,17,18+$alg_quote1:16,17,18 -q $nonce
+tpm2_quote -Q -C $Handle_ak_quote  -L $alg_quote:16,17,18+$alg_quote1:16,17,18 -q $nonce
 
 #####AK
-tpm2_createek -Q -H  $Handle_ek_quote -g 0x01 -p ek.pub2
+tpm2_createek -Q -c $Handle_ek_quote -g 0x01 -p ek.pub2
 
-tpm2_createak -Q -E  $Handle_ek_quote -k  $Handle_ak_quote2 -p ak.pub2 -n ak.name_2
+tpm2_createak -Q -C $Handle_ek_quote -k  $Handle_ak_quote2 -p ak.pub2 -n ak.name_2
 
-tpm2_quote -Q -k $Handle_ak_quote -g $alg_quote -l 16,17,18 -q $nonce
+tpm2_quote -Q -C $Handle_ak_quote -g $alg_quote -l 16,17,18 -q $nonce
 
 exit 0

@@ -56,26 +56,25 @@ struct tpm_sign_ctx {
         TPMS_AUTH_COMMAND session_data;
         tpm2_session *session;
     } auth;
-    TPMI_DH_OBJECT keyHandle;
     TPMI_ALG_HASH halg;
     TPM2B_DIGEST digest;
     char *outFilePath;
     BYTE *msg;
     UINT16 length;
-    char *contextKeyFile;
+    const char *context_arg;
+    tpm2_loaded_object key_context;
     char *inMsgFileName;
     tpm2_convert_sig_fmt sig_format;
     struct {
-        UINT16 k : 1;
         UINT16 P : 1;
         UINT16 g : 1;
         UINT16 m : 1;
         UINT16 t : 1;
         UINT16 s : 1;
-        UINT16 c : 1;
         UINT16 f : 1;
         UINT16 D : 1;
     } flags;
+    char *key_auth_str;
 };
 
 tpm_sign_ctx ctx = {
@@ -101,12 +100,12 @@ static bool sign_and_save(TSS2_SYS_CONTEXT *sapi_context) {
       }
     }
 
-    bool result = get_signature_scheme(sapi_context, ctx.keyHandle, ctx.halg, &in_scheme);
+    bool result = get_signature_scheme(sapi_context, ctx.key_context.handle, ctx.halg, &in_scheme);
     if (!result) {
         return false;
     }
 
-    TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_Sign(sapi_context, ctx.keyHandle,
+    TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_Sign(sapi_context, ctx.key_context.handle,
             &sessions_data, &ctx.digest, &in_scheme, &ctx.validation, &signature,
             &sessions_data_out));
     if (rval != TPM2_RC_SUCCESS) {
@@ -119,7 +118,7 @@ static bool sign_and_save(TSS2_SYS_CONTEXT *sapi_context) {
 
 static bool init(TSS2_SYS_CONTEXT *sapi_context) {
 
-    if (!((ctx.flags.k || ctx.flags.c) && (ctx.flags.m || ctx.flags.D) && ctx.flags.s)) {
+    if (!(ctx.context_arg && (ctx.flags.m || ctx.flags.D) && ctx.flags.s)) {
         LOG_ERR("Expected options (k or c) and (m or D) and s");
         return false;
     }
@@ -137,12 +136,12 @@ static bool init(TSS2_SYS_CONTEXT *sapi_context) {
     /*
      * load tpm context from a file if -c is provided
      */
-    if (ctx.flags.c) {
-        bool result = files_load_tpm_context_from_path(sapi_context, &ctx.keyHandle,
-                ctx.contextKeyFile);
-        if (!result) {
-            return false;
-        }
+    bool result = tpm2_util_object_load(sapi_context, ctx.context_arg, &ctx.key_context);
+    if (!result) {
+        tpm2_tool_output(
+                "Failed to load contest object for key (handle: 0x%x, path: %s).\n",
+                ctx.key_context.handle, ctx.key_context.path);
+        return false;
     }
 
     /*
@@ -150,7 +149,7 @@ static bool init(TSS2_SYS_CONTEXT *sapi_context) {
      */
     if (ctx.flags.m && !ctx.flags.D) {
       unsigned long file_size;
-      bool result = files_get_file_size_path(ctx.inMsgFileName, &file_size);
+      result = files_get_file_size_path(ctx.inMsgFileName, &file_size);
       if (!result) {
           return false;
       }
@@ -186,25 +185,12 @@ static bool init(TSS2_SYS_CONTEXT *sapi_context) {
 static bool on_option(char key, char *value) {
 
     switch (key) {
-    case 'k': {
-        bool result = tpm2_util_string_to_uint32(value, &ctx.keyHandle);
-        if (!result) {
-            LOG_ERR("Could not format key handle to number, got: \"%s\"",
-                    value);
-            return false;
-        }
-        ctx.flags.k = 1;
-    }
+    case 'c':
+        ctx.context_arg = value;
         break;
-    case 'P': {
-        bool result = tpm2_auth_util_from_optarg(value, &ctx.auth.session_data,
-                &ctx.auth.session);
-        if (!result) {
-            LOG_ERR("Invalid key authorization, got\"%s\"", value);
-            return false;
-        }
+    case 'P':
         ctx.flags.P = 1;
-    }
+        ctx.key_auth_str = value;
         break;
     case 'g': {
         ctx.halg = tpm2_alg_util_from_optarg(value);
@@ -246,10 +232,6 @@ static bool on_option(char key, char *value) {
         ctx.flags.s = 1;
     }
         break;
-    case 'c':
-        ctx.contextKeyFile = value;
-        ctx.flags.c = 1;
-        break;
     case 'f':
         ctx.flags.f = 1;
         ctx.sig_format = tpm2_convert_sig_fmt_from_optarg(value);
@@ -266,7 +248,6 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     static const struct option topts[] = {
-      { "key-handle",           required_argument, NULL, 'k' },
       { "auth-key",             required_argument, NULL, 'P' },
       { "halg",                 required_argument, NULL, 'g' },
       { "message",              required_argument, NULL, 'm' },
@@ -277,7 +258,7 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
       { "format",               required_argument, NULL, 'f' }
     };
 
-    *opts = tpm2_options_new("k:P:g:m:D:t:s:c:f:", ARRAY_LEN(topts), topts,
+    *opts = tpm2_options_new("P:g:m:D:t:s:c:f:", ARRAY_LEN(topts), topts,
                              on_option, NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
@@ -291,6 +272,15 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     bool result = init(sapi_context);
     if (!result) {
         goto out;
+    }
+
+    if (ctx.flags.P) {
+        result = tpm2_auth_util_from_optarg(sapi_context, ctx.key_auth_str,
+                &ctx.auth.session_data, &ctx.auth.session);
+        if (!result) {
+            LOG_ERR("Invalid key authorization, got\"%s\"", ctx.key_auth_str);
+            goto out;
+        }
     }
 
     result = sign_and_save(sapi_context);

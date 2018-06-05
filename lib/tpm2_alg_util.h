@@ -96,6 +96,15 @@ TPM2_ALG_ID tpm2_alg_util_from_optarg(char *optarg);
 bool tpm2_alg_util_is_hash_alg(TPM2_ALG_ID id);
 
 /**
+ * Detects if an algorithm is considered a signing scheme.
+ * @param id
+ *  The algorithm id to check.
+ * @return
+ *  True if it is a signing scheme, False otherwise.
+ */
+bool tpm2_alg_util_is_signing_scheme(TPM2_ALG_ID id);
+
+/**
  * Contains the information from parsing an argv style vector of strings for
  * pcr digest language specifications.
  */
@@ -192,5 +201,50 @@ UINT8* tpm2_extract_plain_signature(UINT16 *size, TPMT_SIGNATURE *signature);
 bool get_signature_scheme(TSS2_SYS_CONTEXT *sapi_context,
         TPMI_DH_OBJECT keyHandle, TPMI_ALG_HASH halg,
         TPMT_SIG_SCHEME *scheme);
+
+/**
+ * Given the object algorithm type, generate settings for TPMU_PUBLIC_PARMS values for a leaf object
+ * and modify conflicting object attributes if present.
+ *
+ * XXX This likely isn't the best interface for this, eventually we will probably want to
+ * clean up the public structure value settings.
+ *
+ * @param type
+ *  The algorithm type of the object.
+ * @param public
+ *  The public structure to set the TPMU_PUBLIC_PARMS values for.
+ * @param is_sealing
+ *  Whether or not the object is being used to seal data.
+ * @return
+ *  true on success, false otherwise.
+ */
+bool tpm2_alg_util_set_leaf_pub_params(TPMI_ALG_PUBLIC type, TPM2B_PUBLIC *public, bool is_sealing);
+
+/**
+ * Given the object algorithm type, generate settings for TPMU_PUBLIC_PARMS values for a parent object
+ * and modify conflicting object attributes if present.
+ *
+ * XXX This likely isn't the best interface for this, eventually we will probably want to
+ * clean up the public structure value settings.
+ *
+ * @param type
+ *  The algorithm type of the object.
+ * @param public
+ *  The public structure to set the TPMU_PUBLIC_PARMS values for.
+ * @return
+ *  true on success, false otherwise.
+ */
+bool tpm2_alg_util_set_parent_pub_params(TPMI_ALG_PUBLIC type, TPM2B_PUBLIC *public);
+
+/**
+ * Sets the name algorithm in the public structure checking for validity.
+ * @param halg
+ *  The hahsing algorithm to use for name generation.
+ * @param public
+ *  The public structure to set the name hashing algorithm on.
+ * @return
+ *  true on success, false otherwise.
+ */
+bool tpm2_alg_util_set_name(TPMI_ALG_HASH halg, TPM2B_PUBLIC *public);
 
 #endif /* LIB_TPM2_ALG_UTIL_H_ */

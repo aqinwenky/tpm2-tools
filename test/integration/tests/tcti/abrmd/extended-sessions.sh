@@ -30,6 +30,9 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 # THE POSSIBILITY OF SUCH DAMAGE.
 #;**********************************************************************;
+
+source helpers.sh
+
 alg_primary_obj=sha256
 alg_primary_key=ecc
 alg_create_obj=sha256
@@ -53,7 +56,7 @@ secret="12345678"
 
 onerror() {
     echo "$BASH_COMMAND on line ${BASH_LINENO[0]} failed: $?"
-    exit 0
+    exit 1
 }
 trap onerror ERR
 
@@ -66,6 +69,8 @@ cleanup() {
   tpm2_flushcontext -S $file_session_file 2>/dev/null || true
 }
 trap cleanup EXIT
+
+start_up
 
 cleanup
 
@@ -89,7 +94,7 @@ tpm2_clear
 # Step 4: Using that actual policy session from step 3 in tpm2_unseal to unseal the object.
 #
 
-tpm2_createprimary -Q -a e -g $alg_primary_obj -G $alg_primary_key -C $file_primary_key_ctx
+tpm2_createprimary -Q -a e -g $alg_primary_obj -G $alg_primary_key -o $file_primary_key_ctx
 
 tpm2_pcrlist -Q -L ${alg_pcr_policy}:${pcr_ids} -o $file_pcr_value
 
@@ -99,10 +104,10 @@ tpm2_policypcr -Q -S $file_session_file -L ${alg_pcr_policy}:${pcr_ids} -F $file
 
 tpm2_flushcontext -S $file_session_file
 
-tpm2_create -Q -g $alg_create_obj -G $alg_create_key -u $file_unseal_key_pub -r $file_unseal_key_priv -I- -c $file_primary_key_ctx -L $file_policy \
+tpm2_create -Q -g $alg_create_obj -G $alg_create_key -u $file_unseal_key_pub -r $file_unseal_key_priv -I- -C $file_primary_key_ctx -L $file_policy \
   -A 'sign|fixedtpm|fixedparent|sensitivedataorigin' <<< $secret
 
-tpm2_load -Q -c $file_primary_key_ctx -u $file_unseal_key_pub -r $file_unseal_key_priv -n $file_unseal_key_name -C $file_unseal_key_ctx
+tpm2_load -Q -C $file_primary_key_ctx -u $file_unseal_key_pub -r $file_unseal_key_priv -n $file_unseal_key_name -o $file_unseal_key_ctx
 
 # Start a REAL policy session (-a option) and perform a pcr policy event
 handle=`tpm2_startauthsession -a -S $file_session_file | cut -d' ' -f 2-2`

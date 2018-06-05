@@ -34,9 +34,12 @@
 source helpers.sh
 
 cleanup() {
-    tpm2_evictcontrol -Q -a o -H 0x81010005 -p 0x81010005 2>/dev/null
+    tpm2_evictcontrol -Q -a o -c 0x81010005 2>/dev/null
     rm -f import_key.ctx  import_key.name  import_key.priv  import_key.pub \
-          parent.ctx parent.pub  plain.dec.ssl  plain.enc  plain.txt  sym.key
+          parent.ctx parent.pub  plain.dec.ssl  plain.enc  plain.txt  sym.key \
+          import_rsa_key.pub import_rsa_key.priv import_rsa_key.ctx import_rsa_key.name \
+          private.pem public.pem plain.rsa.enc plain.rsa.dec \
+          public.pem data.in.raw data.in.digest data.out.signed
 
     if [ "$1" != "no-shut-down" ]; then
           shut_down
@@ -48,18 +51,19 @@ start_up
 
 cleanup "no-shut-down"
 
-tpm2_createprimary -Q -G 1 -g 0xb -a o -C parent.ctx
+tpm2_createprimary -Q -G 1 -g 0xb -a o -o parent.ctx
 tpm2_evictcontrol -Q -a o -c parent.ctx -p 0x81010005
 
 dd if=/dev/urandom of=sym.key bs=1 count=16 2>/dev/null
 
-tpm2_readpublic -Q -H 0x81010005 --out-file parent.pub
+tpm2_readpublic -Q -c 0x81010005 --out-file parent.pub
 
-tpm2_import -Q -k sym.key -H 0x81010005 -f parent.pub -q import_key.pub \
+#Symmetric Key Import Test
+tpm2_import -Q -G aes -k sym.key -H 0x81010005 -K parent.pub -q import_key.pub \
 -r import_key.priv
 
-tpm2_load -Q -H 0x81010005 -u import_key.pub -r import_key.priv -n import_key.name \
--C import_key.ctx
+tpm2_load -Q -C 0x81010005 -u import_key.pub -r import_key.priv -n import_key.name \
+-o import_key.ctx
 
 echo "plaintext" > "plain.txt"
 
@@ -69,9 +73,38 @@ openssl enc -in plain.enc -out plain.dec.ssl -d -K `xxd -p sym.key` -iv 0 \
 -aes-128-cfb
 
 diff plain.txt plain.dec.ssl
-if [ $? != 0 ];then
-echo "TEST: tpm2_import failed"
-exit 1
-fi
+
+#Asymmetric Key Import Test
+openssl genrsa -out private.pem 2048
+openssl rsa -in private.pem -pubout > public.pem
+
+# Test an import without the parent public info data to force a readpublic
+tpm2_import -Q -G rsa -k private.pem -H 0x81010005 \
+-q import_rsa_key.pub -r import_rsa_key.priv
+
+tpm2_load -Q -C 0x81010005 -u import_rsa_key.pub -r import_rsa_key.priv \
+-n import_rsa_key.name -o import_rsa_key.ctx
+
+openssl rsa -in private.pem -out public.pem -outform PEM -pubout
+openssl rsautl -encrypt -inkey public.pem -pubin -in plain.txt -out plain.rsa.enc
+
+tpm2_rsadecrypt -c import_rsa_key.ctx -I plain.rsa.enc -o plain.rsa.dec
+
+diff plain.txt plain.rsa.dec
+
+# test verifying a sigature with the imported key, ie sign in tpm and verify with openssl
+echo "data to sign" > data.in.raw
+
+sha256sum data.in.raw | awk '{ print "000000 " $1 }' | xxd -r -c 32 > data.in.digest
+
+tpm2_sign -Q -c import_rsa_key.ctx -g sha256 -D data.in.digest -f plain -s data.out.signed
+
+openssl dgst -verify public.pem -keyform pem -sha256 -signature data.out.signed data.in.raw
+
+# Sign with openssl and verify with TPM
+openssl dgst -sha256 -sign private.pem -out data.out.signed data.in.raw
+
+# Verify with the TPM
+tpm2_verifysignature -Q -c import_rsa_key.ctx -g sha256 -m data.in.raw -f rsassa -s data.out.signed -t ticket.out
 
 exit 0

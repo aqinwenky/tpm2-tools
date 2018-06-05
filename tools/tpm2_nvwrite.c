@@ -67,7 +67,9 @@ struct tpm_nvwrite_ctx {
     TPML_PCR_SELECTION pcr_selection;
     struct {
         UINT8 L : 1;
+        UINT8 P : 1;
     } flags;
+    char *hierarchy_auth_str;
 };
 
 static tpm_nvwrite_ctx ctx = {
@@ -117,6 +119,9 @@ static bool nv_write(TSS2_SYS_CONTEXT *sapi_context) {
 
     if (max_data_size > TPM2_MAX_NV_BUFFER_SIZE) {
         max_data_size = TPM2_MAX_NV_BUFFER_SIZE;
+    }
+    else if (max_data_size == 0) {
+        max_data_size = NV_DEFAULT_BUFFER_SIZE;
     }
 
     while (ctx.data_size > 0) {
@@ -173,12 +178,8 @@ static bool on_option(char key, char *value) {
         }
         break;
     case 'P':
-        result = tpm2_auth_util_from_optarg(value, &ctx.auth.session_data,
-                &ctx.auth.session);
-        if (!result) {
-            LOG_ERR("Invalid handle authorization, got\"%s\"", value);
-            return false;
-        }
+        ctx.flags.P = 1;
+        ctx.hierarchy_auth_str = value;
         break;
     case 'o':
         if (!tpm2_util_string_to_uint16(value, &ctx.offset)) {
@@ -296,6 +297,16 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
         LOG_ERR("File larger than TPM2_MAX_NV_BUFFER_SIZE, got %lu expected %u", file_size,
                 TPM2_MAX_NV_BUFFER_SIZE);
         goto out;
+    }
+
+    if (ctx.flags.P) {
+        result = tpm2_auth_util_from_optarg(sapi_context, ctx.hierarchy_auth_str,
+                &ctx.auth.session_data, &ctx.auth.session);
+        if (!result) {
+            LOG_ERR("Invalid handle authorization, got\"%s\"",
+                ctx.hierarchy_auth_str);
+            goto out;
+        }
     }
 
     if (result) {

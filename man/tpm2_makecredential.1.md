@@ -14,20 +14,20 @@ TPM.
 # DESCRIPTION
 
 **tpm2_makecredential**(1) - Use a TPM public key to protect a secret that is used
-to encrypt the AK certififcate.
+to encrypt the AK certificate.
 
 # OPTIONS
 
   * **-e**, **--enckey**=_PUBLIC\_FILE_:
     A tpm Public Key which was used to wrap the seed.
 
-  * **-s**, **--sec**=_SECRET\_DATA\_FILE_:
+  * **-s**, **--secret**=_SECRET\_DATA\_FILE_:
     The secret which will be protected by the key derived from the random seed.
 
-  * **-n**, **--name**=_NAME_
+  * **-n**, **--name**=_NAME_:
     The name of the key for which certificate is to be created.
 
-  * **-o**, **--out-file**=_OUT\_FILE_
+  * **-o**, **--out-file**=_OUT\_FILE_:
     The output file path, recording the two structures output by
     tpm2_makecredential function.
 

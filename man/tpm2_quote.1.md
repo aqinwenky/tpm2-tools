@@ -16,16 +16,13 @@
 
 # OPTIONS
 
-  * **-k**, **--ak-handle**=_AK\_HANDLE_:
+  * **-C**, **--ak-context**=_AK\_CONTEXT\_OBJECT_:
 
-    Handle of existing AK.
-
-  * **-c**, **--ak-context**=_AK\_CONTEXT\_FILE_:
-
-    Filename for the existing AK's context.
+    Context object for the existing AK's context. Either a file or a handle number.
+    See section "Context Object Format".
 
   * **-P**, **--auth-ak**=_AK\_AUTH_:
-    Specifies the authorization value for AK specified by option **-k**.
+    Specifies the authorization value for AK specified by option **-C**.
     Authorization values should follow the authorization formatting standards,
     see section "Authorization Formatting".
 
@@ -37,7 +34,7 @@
 
     The list of pcr banks and selected PCRs' ids for each bank.
     _PCR\_SELECTION\_LIST_ values should follow the
-    pcr bank specifiers standards, see section "PCR Bank Specfiers".
+    pcr bank specifiers standards, see section "PCR Bank Specifiers".
 
   * **-m**, **--message**:
 
@@ -70,20 +67,22 @@
 
 [common tcti options](common/tcti.md)
 
-[authorization formatting](common/password.md)
+[context object format](commmon/ctxobj.md)
 
-[pcr bank specifiers](common/password.md)
+[authorization formatting](common/authorizations.md)
+
+[pcr bank specifiers](common/pcr.md)
 
 [signature format specifiers](common/signature.md)
 
 # EXAMPLES
 
 ```
-tpm2_quote -k 0x81010002 -P abc123 -g sha1 -l 16,17,18
-tpm2_quote -c ak.context -P "str:abc123" -g sha1 -l 16,17,18
-tpm2_quote -k 0x81010002 -g sha1 -l 16,17,18
-tpm2_quote -c ak.context -g sha1 -l 16,17,18
-tpm2_quote -k 0x81010002 -P "hex:123abc" -L sha1:16,17,18+sha256:16,17,18 -q 11aa22bb
+tpm2_quote -C 0x81010002 -P abc123 -L sha1 -l 16,17,18
+tpm2_quote -C ak.context -P "str:abc123" -L sha1 -l 16,17,18
+tpm2_quote -C 0x81010002 -L sha1 -l 16,17,18
+tpm2_quote -C ak.dat -L sha1 -l 16,17,18
+tpm2_quote -C 0x81010002 -P "hex:123abc" -L sha1:16,17,18+sha256:16,17,18 -q 11aa22bb
 ```
 
 # RETURNS

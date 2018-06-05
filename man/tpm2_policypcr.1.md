@@ -57,7 +57,7 @@ Then, it uses a *policy* session to unseal some data stored in the object.
 # Step 4: Using the actual policy session from step 3 in tpm2_unseal to unseal the object.
 #
 
-tpm2_createprimary -H e -g sha256 -G ecc -C primary.ctx
+tpm2_createprimary -H e -g sha256 -G ecc -o primary.ctx
 
 tpm2_pcrlist -Q -L "sha1:0,1,2,3 -o pcr.dat
 
@@ -67,10 +67,10 @@ tpm2_policypcr -Q -S session.dat -L "sha1:0,1,2,3" -F pcr.dat -f policy.dat
 
 tpm2_flushcontext -H "$handle"
 
-tpm2_create -Q -g sha256 -G keyedhash -u key.pub -r key.priv -c primary.ctx -L policy.dat \
+tpm2_create -Q -g sha256 -G keyedhash -u key.pub -r key.priv -C primary.ctx -L policy.dat \
   -A 'sign|fixedtpm|fixedparent|sensitivedataorigin' -I- <<< "12345678"
 
-tpm2_load -Q -c primary.ctx -u key.pub -r key.priv -n unseal.key.name -C unseal.key.ctx
+tpm2_load -Q -C primary.ctx -u key.pub -r key.priv -n unseal.key.name -o unseal.key.ctx
 
 # Now that an object is created and a policy is required to access it, satisfy the policy on
 # a session and use it to unseal the data stored in the object.

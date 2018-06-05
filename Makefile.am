@@ -256,8 +256,7 @@ EXTRA_DIST = $(top_srcdir)/man \
 	     README.md \
 	     RELEASE.md \
 	     test/integration
-
-if HAVE_PANDOC
+if HAVE_MAN_PAGES
     man1_MANS := \
     man/man1/tpm2_activatecredential.1 \
     man/man1/tpm2_certify.1 \
@@ -305,7 +304,9 @@ if HAVE_PANDOC
     man/man1/tpm2_startup.1 \
     man/man1/tpm2_unseal.1 \
     man/man1/tpm2_verifysignature.1
+endif
 
+if HAVE_PANDOC
 # If pandoc is enabled, we want to generate the manpages for the dist tarball
 EXTRA_DIST += $(man1_MANS)
 else
@@ -319,6 +320,7 @@ endif
 MARKDOWN_COMMON_DEPS = \
 	man/common/alg.md \
 	man/common/authorizations.md \
+	man/common/ctxobj.md \
 	man/common/footer.md \
 	man/common/hash.md \
 	man/common/obj-attrs.md \
@@ -327,6 +329,7 @@ MARKDOWN_COMMON_DEPS = \
 	man/common/pubkey.md \
 	man/common/sign-alg.md \
 	man/common/signature.md \
+	man/common/signschemes.md \
 	man/common/tcti.md
 
 man/man1/%.1 : man/%.1.md $(MARKDOWN_COMMON_DEPS)
@@ -338,6 +341,8 @@ man/man1/%.1 : man/%.1.md $(MARKDOWN_COMMON_DEPS)
 	    -e '/\[common tcti options\]/d' \
 	    -e '/\[authorization formatting\]/r man/common/authorizations.md' \
 	    -e '/\[authorization formatting\]/d' \
+	    -e '/\[context object format\]/r man/common/ctxobj.md' \
+	    -e '/\[context object format\]/d' \
 	    -e '/\[supported hash algorithms\]/r man/common/hash.md' \
 	    -e '/\[supported hash algorithms\]/d' \
 	    -e '/\[algorithm specifiers\]/r man/common/alg.md' \
@@ -356,6 +361,8 @@ man/man1/%.1 : man/%.1.md $(MARKDOWN_COMMON_DEPS)
 	    -e '/\[signature format specifiers\]/d' \
 	    -e '/\[object attribute specifiers\]/r man/common/obj-attrs.md' \
 	    -e '/\[object attribute specifiers\]/d' \
+	    -e '/\[supported signing schemes\]/r man/common/signschemes.md' \
+	    -e '/\[supported signing schemes\]/d' \
 	    -e '/\[footer\]/r man/common/footer.md' \
 	    -e '/\[footer\]/d' \
 	    < $< | pandoc -s -t man > $@

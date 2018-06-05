@@ -1,5 +1,15 @@
 ## Changelog
 ### next
+  * tpm2_create: -g/-G become optional options.
+  * tpm2_createprimary: -g/-G become optional options.
+  * tpm2_verifysignature - Option `-r` changes to `-f` and supports signature format "rsa".
+  * tpm2_import - Parent public data option, `-K` is optional.
+  * tpm2_import - Supports importing external RSA 2048 keys via pem files.
+  * tpm2_pcrlist: Option `--algorithm` changes to `--halg`, which is in line with other tools.
+  * tpm2_verifysignature: Option `-r` and `--raw` have been removed. This were unused within the tool.
+  * tpm2_hmac: Option `--algorithm` changes to `--halg`, which is in line with the manpage.
+  * tpm2_makecredential: Option `--sec` changes to `--secret`.
+  * tpm2_activatecredential: Option `--Password` changes to `--auth-key`.
   * system tests are now run with make check when --enable-unit is used in configure.
   * tpm2_unseal: Option `--pwdk` changes to `--auth-key`.
   * tpm2_sign: Option `--pwdk` changes to `--auth-key`.
@@ -7,11 +17,11 @@
   * tpm2_quote: Option `--ak-passwd` changes to `--auth-ak`
   * tpm2_pcrevent: Option `--passwd` changes to `--auth-pcr`
   * tpm2_nvwrite: Options `--authhandle` and `--handle-passwd`
-    changes to `--auth-hierarchy` and `--auth-hierarchy-value` respectively.
+    changes to `--hierarchy` and `--auth-hierarchy` respectively.
   * tpm2_nvread: Options `--authhandle` and `--handle-passwd`
-    changes to `--auth-hierarchy` and `--auth-hierarchy-value` respectively.
+    changes to `--hierarchy` and `--auth-hierarchy` respectively.
   * tpm2_nvdefine: Options `--authhandle`, `--handle-passwd` and `--index-passwd`
-    changes to `--auth-hierarchy`, `--auth-hierarchy-value` and `--auth-index`
+    changes to `--hierarchy`, `--auth-hierarchy` and `--auth-index`
     respectively.
   * tpm2_loadexternal: `-H` changes to `-a` for specifying hierarchy.
   * tpm2_load: Option `--pwdp` changes to `--auth-parent`.

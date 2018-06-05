@@ -21,13 +21,10 @@ alive and pass that session using the **--input-session-handle** option.
 
 # OPTIONS
 
-  * **-H**, **--item**=_ITEM\_HANDLE_:
+  * **-c**, **--context-object**=_CONTEXT\_OBJECT_:
 
-    Item handle of loaded object.
-
-  * **-c**, **--item-context**=_ITEM\_CONTEXT\_FILE_:
-
-    Filename of the item context.
+    Context object for the loaded object. Either a file or a handle number.
+    See section "Context Object Format".
 
   * **-P**, **--auth-key**=_KEY\_AUTH_:
 
@@ -48,7 +45,7 @@ alive and pass that session using the **--input-session-handle** option.
 
     The list of pcr banks and selected PCRs' ids.
     _PCR\_SELECTION\_LIST_ values should follow the
-    pcr bank specifiers standards, see section "PCR Bank Specfiers".
+    pcr bank specifiers standards, see section "PCR Bank Specifiers".
     **-S** is mutually exclusive of this option.
 
   * **-F**,**--pcr-input-file**=_PCR\_INPUT\_FILE_
@@ -60,16 +57,18 @@ alive and pass that session using the **--input-session-handle** option.
 
 [common tcti options](common/tcti.md)
 
-[authorization formatting](common/password.md)
+[context object format](commmon/ctxobj.md)
 
-[pcr bank specifiers](common/password.md)
+[authorization formatting](common/authorizations.md)
+
+[pcr bank specifiers](common/pcr.md)
 
 # EXAMPLES
 
 ```
 tpm2_unseal -H 0x81010001 -P abc123 -o out.dat
 tpm2_unseal -c item.context -P abc123 -o out.dat
-tpm2_unseal -H 0x81010001 -P "hex:123abc" -o out.dat
+tpm2_unseal -c 0x81010001 -P "hex:123abc" -o out.dat
 tpm2_unseal -c item.context -L sha1:0,1,2 -F out.dat
 ```
 

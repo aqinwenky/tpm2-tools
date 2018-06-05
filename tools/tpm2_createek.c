@@ -66,13 +66,20 @@ struct createek_context {
     } auth;
     tpm2_hierarchy_pdata objdata;
     char *out_file_path;
-    char *context_file;
-    TPMI_DH_PERSISTENT persistent_handle;
     tpm2_convert_pubkey_fmt format;
     struct {
-        bool f;
+        UINT8 f : 1;
+        UINT8 e : 1;
+        UINT8 o : 1;
+        UINT8 P : 1;
+        UINT8 unused : 4;
     } flags;
+    char *endorse_auth_str;
+    char *owner_auth_str;
+    char *ek_auth_str;
     bool find_persistent_handle;
+    const char *context_arg;
+    tpm2_loaded_object ctx_obj;
 };
 
 static createek_context ctx = {
@@ -83,6 +90,7 @@ static createek_context ctx = {
     },
     .format = pubkey_format_tss,
     .objdata = TPM2_HIERARCHY_DATA_INIT,
+    .flags = { 0 },
     .find_persistent_handle = false
 };
 
@@ -151,11 +159,11 @@ static bool create_ek_handle(TSS2_SYS_CONTEXT *sapi_context) {
         return false;
     }
 
-    if (ctx.persistent_handle) {
+    if (ctx.ctx_obj.handle) {
 
         result = tpm2_ctx_mgmt_evictcontrol(sapi_context, TPM2_RH_OWNER,
                 &ctx.auth.owner.session_data, ctx.objdata.out.handle,
-                ctx.persistent_handle);
+                ctx.ctx_obj.handle);
         if (!result) {
             return false;
         }
@@ -165,9 +173,9 @@ static bool create_ek_handle(TSS2_SYS_CONTEXT *sapi_context) {
             LOG_PERR(Tss2_Sys_FlushContext, rval);
             return false;
         }
-    } else if (ctx.context_file) {
+    } else if (ctx.ctx_obj.path) {
         bool result = files_save_tpm_context_to_path(sapi_context,
-                ctx.objdata.out.handle, ctx.context_file);
+                ctx.objdata.out.handle, ctx.ctx_obj.path);
         if (!result) {
             LOG_ERR("Error saving tpm context for handle");
             return false;
@@ -175,7 +183,7 @@ static bool create_ek_handle(TSS2_SYS_CONTEXT *sapi_context) {
     }
 
     /* If it wasn't persistent, output the transient handle */
-    if (!ctx.persistent_handle) {
+    if (!ctx.ctx_obj.handle) {
         tpm2_tool_output("0x%X\n", ctx.objdata.out.handle);
     }
 
@@ -189,46 +197,18 @@ static bool create_ek_handle(TSS2_SYS_CONTEXT *sapi_context) {
 
 static bool on_option(char key, char *value) {
 
-    bool result;
-
     switch (key) {
-    case 'H':
-        /* If user passes a handle of '-' we try and find a vacant slot for
-         * to use and tell them what it is.
-         */
-        if (!strcmp(value, "-")) {
-            ctx.find_persistent_handle = true;
-        } else {
-            result = tpm2_util_string_to_uint32(value, &ctx.persistent_handle);
-            if (!result) {
-                LOG_ERR("Could not convert EK persistent from hex format.");
-                return false;
-            }
-        }
-        break;
     case 'e':
-        result = tpm2_auth_util_from_optarg(value, &ctx.auth.endorse.session_data,
-                &ctx.auth.endorse.session);
-        if (!result) {
-            LOG_ERR("Invalid endorse authorization, got\"%s\"", value);
-            return false;
-        }
+        ctx.flags.e = 1;
+        ctx.endorse_auth_str = value;
         break;
     case 'o':
-        result = tpm2_auth_util_from_optarg(value, &ctx.auth.owner.session_data,
-                &ctx.auth.owner.session);
-        if (!result) {
-            LOG_ERR("Invalid owner authorization, got\"%s\"", value);
-            return false;
-        }
+        ctx.flags.o = 1;
+        ctx.owner_auth_str = value;
         break;
     case 'P':
-        result = tpm2_auth_util_from_optarg(value, &ctx.auth.ek.session_data,
-                &ctx.auth.ek.session);
-        if (!result) {
-            LOG_ERR("Invalid EK authorization, got\"%s\"", value);
-            return false;
-        }
+        ctx.flags.P = 1;
+        ctx.ek_auth_str = value;
         break;
     case 'g': {
         TPMI_ALG_PUBLIC type = tpm2_alg_util_from_optarg(value);
@@ -253,7 +233,7 @@ static bool on_option(char key, char *value) {
         ctx.flags.f = true;
         break;
     case 'c':
-        ctx.context_file = value;
+        ctx.context_arg = value;
         break;
     }
 
@@ -266,14 +246,13 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
         { "auth-endorse",         required_argument, NULL, 'e' },
         { "auth-owner",           required_argument, NULL, 'o' },
         { "auth-ek",              required_argument, NULL, 'P' },
-        { "handle",               required_argument, NULL, 'H' },
         { "algorithm",            required_argument, NULL, 'g' },
         { "file",                 required_argument, NULL, 'p' },
         { "format",               required_argument, NULL, 'f' },
         { "context",              required_argument, NULL, 'c' },
     };
 
-    *opts = tpm2_options_new("e:o:H:P:g:p:f:c:", ARRAY_LEN(topts), topts,
+    *opts = tpm2_options_new("e:o:P:g:p:f:c:", ARRAY_LEN(topts), topts,
                              on_option, NULL, 0);
 
     return *opts != NULL;
@@ -324,21 +303,52 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
         goto out;
     }
 
-    if (ctx.find_persistent_handle) {
-        bool ret = tpm2_capability_find_vacant_persistent_handle(sapi_context,
-                        &ctx.persistent_handle);
+    bool ret;
+    if (!strcmp(ctx.context_arg, "-")) {
+        /* If user passes a handle of '-' we try and find a vacant slot for
+         * to use and tell them what it is.
+         */
+        ret = tpm2_capability_find_vacant_persistent_handle(sapi_context,
+                        &ctx.ctx_obj.handle);
         if (!ret) {
             LOG_ERR("handle/-H passed with a value '-' but unable to find a"
                     " vacant persistent handle!");
-            return 1;
+            goto out;
         }
-        tpm2_tool_output("persistent-handle: 0x%x\n", ctx.persistent_handle);
+        tpm2_tool_output("persistent-handle: 0x%x\n", ctx.ctx_obj.handle);
+    } else {
+        ret = tpm2_util_object_load(sapi_context, ctx.context_arg, &ctx.ctx_obj);
+        if (!ret) {
+            tpm2_tool_output("Failed to load context object (handle: 0x%x, path: %s).\n",
+                            ctx.ctx_obj.handle, ctx.ctx_obj.path);
+            goto out;
+        }
     }
 
-    if (ctx.context_file && ctx.persistent_handle) {
-        LOG_ERR("Specify either a handle to make it persistent or a file to"
-                " save the context to, not both!");
-        goto out;
+    if (ctx.flags.e) {
+        bool res = tpm2_auth_util_from_optarg(sapi_context, ctx.endorse_auth_str,
+                &ctx.auth.endorse.session_data, &ctx.auth.endorse.session);
+        if (!res) {
+            LOG_ERR("Invalid endorse authorization, got\"%s\"",
+                ctx.endorse_auth_str);
+            return 1;
+        }
+    }
+    if (ctx.flags.o) {
+        bool res = tpm2_auth_util_from_optarg(sapi_context, ctx.owner_auth_str,
+                &ctx.auth.owner.session_data, &ctx.auth.owner.session);
+        if (!res) {
+            LOG_ERR("Invalid owner authorization, got\"%s\"", ctx.owner_auth_str);
+            return 1;
+        }
+    }
+    if (ctx.flags.P) {
+        bool res = tpm2_auth_util_from_optarg(sapi_context, ctx.ek_auth_str,
+                &ctx.auth.ek.session_data, &ctx.auth.ek.session);
+        if (!res) {
+            LOG_ERR("Invalid EK authorization, got\"%s\"", ctx.ek_auth_str);
+            return 1;
+        }
     }
 
     /* override the default attrs */

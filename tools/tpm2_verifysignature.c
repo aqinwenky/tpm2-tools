@@ -1,5 +1,5 @@
 //**********************************************************************;
-// Copyright (c) 2015, Intel Corporation
+// Copyright (c) 2015-2018, Intel Corporation
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -38,6 +38,7 @@
 #include "files.h"
 #include "log.h"
 #include "tpm2_alg_util.h"
+#include "tpm2_convert.h"
 #include "tpm2_hash.h"
 #include "tpm2_options.h"
 #include "tpm2_tool.h"
@@ -47,28 +48,29 @@ typedef struct tpm2_verifysig_ctx tpm2_verifysig_ctx;
 struct tpm2_verifysig_ctx {
     union {
         struct {
-            UINT8 key_handle :1;
             UINT8 digest :1;
             UINT8 halg :1;
             UINT8 msg :1;
-            UINT8 raw :1;
             UINT8 sig :1;
             UINT8 ticket :1;
             UINT8 key_context :1;
+            UINT8 fmt;
         };
         UINT8 all;
     } flags;
+    TPMI_ALG_SIG_SCHEME format;
     TPMI_ALG_HASH halg;
     TPM2B_DIGEST msgHash;
-    TPMI_DH_OBJECT keyHandle;
     TPMT_SIGNATURE signature;
     char *msg_file_path;
     char *sig_file_path;
     char *out_file_path;
-    char *context_key_file_path;
+    const char *context_arg;
+    tpm2_loaded_object key_context_object;
 };
 
 tpm2_verifysig_ctx ctx = {
+        .format = TPM2_ALG_ERROR,
         .halg = TPM2_ALG_SHA1,
         .msgHash = TPM2B_TYPE_INIT(TPM2B_DIGEST, buffer),
 };
@@ -87,7 +89,7 @@ static bool verify_signature(TSS2_SYS_CONTEXT *sapi_context) {
     }
     tpm2_tool_output("\n");
 
-    rval = TSS2_RETRY_EXP(Tss2_Sys_VerifySignature(sapi_context, ctx.keyHandle, NULL,
+    rval = TSS2_RETRY_EXP(Tss2_Sys_VerifySignature(sapi_context, ctx.key_context_object.handle, NULL,
             &ctx.msgHash, &ctx.signature, &validation, &sessionsDataOut));
     if (rval != TPM2_RC_SUCCESS) {
         LOG_PERR(Tss2_Sys_VerifySignature, rval);
@@ -134,8 +136,7 @@ static bool init(TSS2_SYS_CONTEXT *sapi_context) {
         return false;
     }
 
-    if (!((ctx.flags.key_handle || ctx.flags.key_context) && ctx.flags.sig
-            && ctx.flags.ticket)) {
+    if (!(ctx.context_arg && ctx.flags.sig && ctx.flags.ticket)) {
         LOG_ERR(
                 "--keyHandle (-k) or --keyContext (-c) and --sig (-s) and --ticket (-t) must be specified");
         return false;
@@ -143,6 +144,14 @@ static bool init(TSS2_SYS_CONTEXT *sapi_context) {
 
     TPM2B *msg = NULL;
     bool return_value = false;
+
+    return_value = tpm2_util_object_load(sapi_context, ctx.context_arg, &ctx.key_context_object);
+    if (!return_value) {
+        tpm2_tool_output(
+                "Failed to load contest object for key (handle: 0x%x, path: %s).\n",
+                ctx.key_context_object.handle, ctx.key_context_object.path);
+        return false;
+    }
 
     if (ctx.flags.msg) {
         msg = message_from_file(ctx.msg_file_path);
@@ -153,16 +162,10 @@ static bool init(TSS2_SYS_CONTEXT *sapi_context) {
     }
 
     if (ctx.flags.sig) {
-        bool res =  files_load_signature(ctx.sig_file_path, &ctx.signature);
-        if (!res) {
-            goto err;
-        }
-    }
 
-    if (ctx.flags.key_context) {
-        bool result = files_load_tpm_context_from_path(sapi_context, &ctx.keyHandle,
-                ctx.context_key_file_path);
-        if (!result) {
+        tpm2_convert_sig_fmt fmt = ctx.flags.fmt ? signature_format_plain : signature_format_tss;
+        bool res = tpm2_convert_sig_load(ctx.sig_file_path, fmt, ctx.format, ctx.halg, &ctx.signature);
+        if (!res) {
             goto err;
         }
     }
@@ -195,15 +198,9 @@ err:
 static bool on_option(char key, char *value) {
 
 	switch (key) {
-	case 'k': {
-		bool res = tpm2_util_string_to_uint32(value, &ctx.keyHandle);
-		if (!res) {
-			LOG_ERR("Unable to convert key handle, got: \"%s\"", value);
-			return false;
-		}
-		ctx.flags.key_handle = 1;
-	}
-		break;
+	case 'c':
+	    ctx.context_arg = value;
+	    break;
 	case 'g': {
 		ctx.halg = tpm2_alg_util_from_optarg(value);
 		if (ctx.halg == TPM2_ALG_ERROR) {
@@ -227,9 +224,20 @@ static bool on_option(char key, char *value) {
 		ctx.flags.digest = 1;
 	}
 		break;
-	case 'r':
-		ctx.flags.raw = 1;
-		break;
+	case 'f': {
+		ctx.format = tpm2_alg_util_from_optarg(value);
+		if (ctx.format == TPM2_ALG_ERROR) {
+		    LOG_ERR("Unknown signing scheme, got: \"%s\"", value);
+		    return false;
+		}
+
+		bool result = tpm2_alg_util_is_signing_scheme(ctx.format);
+		if (!result) {
+		    LOG_ERR("Algorithm is NOT a signing scheme, got: \"%s\"", value);
+		    return false;
+		}
+		ctx.flags.fmt = 1;
+	} break;
 	case 's':
 		ctx.sig_file_path = value;
 		ctx.flags.sig = 1;
@@ -242,10 +250,6 @@ static bool on_option(char key, char *value) {
 		}
 		ctx.flags.ticket = 1;
 		break;
-	case 'c':
-		ctx.context_key_file_path = value;
-		ctx.flags.key_context = 1;
-		break;
 		/* no default */
 	}
 
@@ -255,18 +259,17 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     const struct option topts[] = {
-            { "key-handle",  required_argument, NULL, 'k' },
             { "digest",      required_argument, NULL, 'D' },
             { "halg",        required_argument, NULL, 'g' },
             { "message",     required_argument, NULL, 'm' },
-            { "raw",         no_argument,       NULL, 'r' },
+            { "format",      required_argument, NULL, 'f' },
             { "sig",         required_argument, NULL, 's' },
             { "ticket",      required_argument, NULL, 't' },
             { "key-context", required_argument, NULL, 'c' },
     };
 
 
-    *opts = tpm2_options_new("k:g:m:D:rs:t:c:", ARRAY_LEN(topts), topts,
+    *opts = tpm2_options_new("g:m:D:f:s:t:c:", ARRAY_LEN(topts), topts,
                              on_option, NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;

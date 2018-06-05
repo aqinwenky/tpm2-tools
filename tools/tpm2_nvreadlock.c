@@ -56,6 +56,11 @@ struct tpm_nvreadlock_ctx {
         tpm2_session *session;
         TPMI_RH_PROVISION hierarchy;
     } auth;
+    struct {
+        UINT8 P : 1;
+        UINT8 unused : 7;
+    } flags;
+    char *passwd_auth_str;
 };
 
 static tpm_nvreadlock_ctx ctx = {
@@ -108,12 +113,8 @@ static bool on_option(char key, char *value) {
         }
         break;
     case 'P':
-        result = tpm2_auth_util_from_optarg(value, &ctx.auth.session_data,
-                &ctx.auth.session);
-        if (!result) {
-            LOG_ERR("Invalid handle authorization, got\"%s\"", value);
-                return false;
-        }
+        ctx.flags.P = 1;
+        ctx.passwd_auth_str = value;
         break;
     }
 
@@ -126,10 +127,9 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
         { "index",                required_argument, NULL, 'x' },
         { "hierarchy",       required_argument, NULL, 'a' },
         { "handle-passwd",        required_argument, NULL, 'P' },
-        { "passwdInHex",          no_argument,       NULL, 'X' },
     };
 
-    *opts = tpm2_options_new("x:a:P:X", ARRAY_LEN(topts), topts,
+    *opts = tpm2_options_new("x:a:P:", ARRAY_LEN(topts), topts,
                              on_option, NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
@@ -141,6 +141,16 @@ int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
     int rc = 1;
     bool result;
+
+    if (ctx.flags.P) {
+        result = tpm2_auth_util_from_optarg(sapi_context, ctx.passwd_auth_str,
+                &ctx.auth.session_data, &ctx.auth.session);
+        if (!result) {
+            LOG_ERR("Invalid handle authorization, got\"%s\"",
+                ctx.passwd_auth_str);
+           goto out;
+        }
+    }
 
     result = nv_readlock(sapi_context);
     if (!result) {

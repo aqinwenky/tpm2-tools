@@ -1,5 +1,5 @@
 //**********************************************************************;
-// Copyright (c) 2017, Intel Corporation
+// Copyright (c) 2017-2018, Intel Corporation
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -29,18 +29,21 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 //**********************************************************************;
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
-#include <openssl/rand.h>
+#include <openssl/aes.h>
 #include <openssl/bn.h>
 #include <openssl/evp.h>
-#include <openssl/sha.h>
+#include <openssl/err.h>
 #include <openssl/hmac.h>
-#include <openssl/aes.h>
+#include <openssl/pem.h>
+#include <openssl/rand.h>
 #include <openssl/rsa.h>
+#include <openssl/sha.h>
 
 #include <limits.h>
 #include <tss2/tss2_sys.h>
@@ -48,16 +51,15 @@
 
 #include "log.h"
 #include "files.h"
+#include "tpm2_alg_util.h"
 #include "tpm_kdfa.h"
 #include "tpm2_errata.h"
 #include "tpm2_options.h"
 #include "tpm2_tool.h"
 #include "tpm2_util.h"
 
-#define SYM_KEY_SIZE 16
-#define max_buffer_size  1024
-
-#define RSA_2K_MODULUS_SIZE_IN_BYTES 256
+#define RSA_2K_MODULUS_SIZE_IN_BYTES TPM2_MAX_RSA_KEY_BYTES / 2
+#define RSA_2K_MODULUS_SIZE_IN_BITS RSA_2K_MODULUS_SIZE_IN_BYTES * 8
 
 typedef struct tpm_import_ctx tpm_import_ctx;
 struct tpm_import_ctx {
@@ -65,7 +67,12 @@ struct tpm_import_ctx {
     char *import_key_public_file;
     char *import_key_private_file;
     char *parent_key_public_file;
-    uint8_t input_key_buffer[SYM_KEY_SIZE];
+    uint8_t *input_key_buffer;
+    uint16_t input_key_buffer_length;
+    uint8_t *input_pub_key_buffer;
+    uint16_t input_pub_key_buffer_length;
+    TPMI_ALG_PUBLIC key_type;
+    //TPM2 Parent key to host the imported key
     TPM2_HANDLE parent_key_handle;
     //External key public
     TPM2B_PUBLIC import_key_public;
@@ -79,8 +86,8 @@ struct tpm_import_ctx {
     uint8_t protection_seed_data[TPM2_SHA256_DIGEST_SIZE]; //max tpm digest
     uint8_t encrypted_protection_seed_data[RSA_2K_MODULUS_SIZE_IN_BYTES];
     uint8_t protection_hmac_key[TPM2_SHA256_DIGEST_SIZE];
-    uint8_t protection_enc_key[SYM_KEY_SIZE];
-    uint8_t import_key_public_unique_data[TPM2_SHA256_DIGEST_SIZE];
+    uint8_t protection_enc_key[TPM2_MAX_SYM_BLOCK_SIZE];
+    uint8_t *import_key_public_unique_data;
     uint8_t outer_integrity_hmac[TPM2_SHA256_DIGEST_SIZE];
     TPM2B_DATA enc_sensitive_key;
     TPM2B_MAX_BUFFER encrypted_inner_integrity;
@@ -89,6 +96,7 @@ struct tpm_import_ctx {
 };
 
 static tpm_import_ctx ctx = { 
+    .key_type = TPM2_ALG_ERROR,
     .input_key_file = NULL, 
     .parent_key_handle = 0,
     .import_key_public = TPM2B_TYPE_INIT(TPM2B_PUBLIC, publicArea),
@@ -122,14 +130,31 @@ static int RSA_set0_key(RSA *r, BIGNUM *n, BIGNUM *e, BIGNUM *d) {
 }
 #endif
 
-static bool encrypt_seed_with_tpm2_rsa_public_key(void) {
+static bool tpm2_readpublic(TSS2_SYS_CONTEXT *sapi, TPMI_DH_OBJECT handle, TPM2B_PUBLIC *public) {
+
+    TSS2L_SYS_AUTH_RESPONSE sessions_out_data;
+    TPM2B_NAME name = TPM2B_TYPE_INIT(TPM2B_NAME, name);
+    TPM2B_NAME qualified_name = TPM2B_TYPE_INIT(TPM2B_NAME, name);
+
+    TSS2_RC rval = TSS2_RETRY_EXP(Tss2_Sys_ReadPublic(sapi, handle, NULL,
+            public, &name, &qualified_name, &sessions_out_data));
+    if (rval != TPM2_RC_SUCCESS) {
+        LOG_PERR(Tss2_Sys_ReadPublic, rval);
+        return false;
+    }
+
+    return true;
+}
+
+static bool encrypt_seed_with_tpm2_rsa_public_key(TSS2_SYS_CONTEXT *sapi) {
     bool rval = false;
     RSA *rsa = NULL;
     TPM2B_PUBLIC pub_key = TPM2B_EMPTY_INIT;
-    bool res = files_load_public(ctx.parent_key_public_file, &pub_key);
-
+    bool res = ctx.parent_key_public_file ?
+            files_load_public(ctx.parent_key_public_file, &pub_key) :
+            tpm2_readpublic(sapi, ctx.parent_key_handle, &pub_key);
     if (!res) {
-        LOG_ERR("Failed loading parent key public file.");
+        LOG_ERR("Failed loading parent key public.");
         return false;
     }
 
@@ -206,27 +231,27 @@ static void aes_128_cfb_encrypt_buffers(uint8_t *buffer1, uint16_t buffer1_size,
         uint8_t *buffer2, uint16_t buffer2_size, uint8_t *encryption_key,
         uint8_t *encrypted_data) {
     //AES encryption
-    uint8_t to_encrypt_buffer[max_buffer_size];
+    uint8_t to_encrypt_buffer[TPM2_MAX_DIGEST_BUFFER];
     memcpy(to_encrypt_buffer, buffer1, buffer1_size);
     if (buffer2 != NULL) {
         memcpy(to_encrypt_buffer + buffer1_size, buffer2, buffer2_size);
     }
 
-    uint8_t iv_in[SYM_KEY_SIZE] = { 0 };
+    uint8_t iv_in[TPM2_MAX_SYM_BLOCK_SIZE] = { 0 };
     AES_KEY aes;
-    AES_set_encrypt_key(encryption_key, SYM_KEY_SIZE * 8, &aes);
+    AES_set_encrypt_key(encryption_key, TPM2_MAX_SYM_BLOCK_SIZE * 8, &aes);
 
     int block;
     int num = 0;
-    for (block = 0; block < (buffer1_size + buffer2_size) / SYM_KEY_SIZE;
+    for (block = 0; block < (buffer1_size + buffer2_size) / TPM2_MAX_SYM_BLOCK_SIZE;
             block++) {
-        AES_cfb128_encrypt(to_encrypt_buffer + (block * SYM_KEY_SIZE),
-                encrypted_data + (block * SYM_KEY_SIZE),
-                SYM_KEY_SIZE, &aes, iv_in, &num, AES_ENCRYPT);
+        AES_cfb128_encrypt(to_encrypt_buffer + (block * TPM2_MAX_SYM_BLOCK_SIZE),
+                encrypted_data + (block * TPM2_MAX_SYM_BLOCK_SIZE),
+                TPM2_MAX_SYM_BLOCK_SIZE, &aes, iv_in, &num, AES_ENCRYPT);
     }
-    AES_cfb128_encrypt(to_encrypt_buffer + (block * SYM_KEY_SIZE),
-            encrypted_data + (block * SYM_KEY_SIZE),
-            (buffer1_size + buffer2_size) % SYM_KEY_SIZE, &aes, iv_in, &num,
+    AES_cfb128_encrypt(to_encrypt_buffer + (block * TPM2_MAX_SYM_BLOCK_SIZE),
+            encrypted_data + (block * TPM2_MAX_SYM_BLOCK_SIZE),
+            (buffer1_size + buffer2_size) % TPM2_MAX_SYM_BLOCK_SIZE, &aes, iv_in, &num,
             AES_ENCRYPT);
 }
 
@@ -234,7 +259,7 @@ static void hmac_outer_integrity(uint8_t *buffer1, uint16_t buffer1_size,
         uint8_t *buffer2, uint16_t buffer2_size, uint8_t *hmac_key,
         uint8_t *outer_integrity_hmac) {
 
-    uint8_t to_hmac_buffer[max_buffer_size];
+    uint8_t to_hmac_buffer[TPM2_MAX_DIGEST_BUFFER];
     memcpy(to_hmac_buffer, buffer1, buffer1_size);
     memcpy(to_hmac_buffer + buffer1_size, buffer2, buffer2_size);
     uint32_t size_in = 0;
@@ -245,27 +270,30 @@ static void hmac_outer_integrity(uint8_t *buffer1, uint16_t buffer1_size,
 static void create_random_seed_and_sensitive_enc_key(void) {
 
     RAND_bytes(ctx.protection_seed_data, TPM2_SHA256_DIGEST_SIZE); //max tpm digest
-    ctx.enc_sensitive_key.size = SYM_KEY_SIZE;
-    RAND_bytes(ctx.enc_sensitive_key.buffer, SYM_KEY_SIZE);
+    ctx.enc_sensitive_key.size = TPM2_MAX_SYM_BLOCK_SIZE;
+    RAND_bytes(ctx.enc_sensitive_key.buffer, TPM2_MAX_SYM_BLOCK_SIZE);
 
 }
 
 static bool calc_sensitive_unique_data(void) {
 
-    uint8_t *concatenated_seed_unique = malloc(
-            TPM2_SHA256_DIGEST_SIZE + SYM_KEY_SIZE);
+    ctx.import_key_public_unique_data = malloc(TPM2_SHA256_DIGEST_SIZE);
+
+    uint8_t *concatenated_seed_unique = malloc(TPM2_SHA256_DIGEST_SIZE +
+                                            ctx.input_key_buffer_length);
     if (!concatenated_seed_unique) {
         LOG_ERR("oom");
         return false;
-    }
+    } 
 
     memcpy(concatenated_seed_unique, ctx.protection_seed_data,
             TPM2_SHA256_DIGEST_SIZE);
-    memcpy(concatenated_seed_unique + TPM2_SHA256_DIGEST_SIZE, ctx.input_key_buffer,
-            SYM_KEY_SIZE);
 
-    SHA256(concatenated_seed_unique, TPM2_SHA256_DIGEST_SIZE + SYM_KEY_SIZE,
-            ctx.import_key_public_unique_data);
+    memcpy(concatenated_seed_unique + TPM2_SHA256_DIGEST_SIZE, ctx.input_key_buffer,
+        ctx.input_key_buffer_length);
+
+    SHA256(concatenated_seed_unique, TPM2_SHA256_DIGEST_SIZE + ctx.input_key_buffer_length,
+        ctx.import_key_public_unique_data);
 
     free(concatenated_seed_unique);
 
@@ -288,9 +316,38 @@ static bool calc_sensitive_unique_data(void) {
     (X).publicArea.parameters.symDetail.sym.mode.sym = TPM2_ALG_CFB;\
     (X).publicArea.unique.sym.size = TPM2_SHA256_DIGEST_SIZE;\
 
+#define IMPORT_KEY_RSA2K_PUBLIC_AREA(X) \
+    (X).publicArea.type = TPM2_ALG_RSA; \
+    (X).publicArea.nameAlg = TPM2_ALG_SHA256;\
+    (X).publicArea.objectAttributes &= ~TPMA_OBJECT_RESTRICTED;\
+    (X).publicArea.objectAttributes |= TPMA_OBJECT_USERWITHAUTH;\
+    (X).publicArea.objectAttributes |= TPMA_OBJECT_DECRYPT;\
+    (X).publicArea.objectAttributes |= TPMA_OBJECT_SIGN_ENCRYPT;\
+    (X).publicArea.objectAttributes &= ~TPMA_OBJECT_FIXEDTPM;\
+    (X).publicArea.objectAttributes &= ~TPMA_OBJECT_FIXEDPARENT;\
+    (X).publicArea.objectAttributes &= ~TPMA_OBJECT_SENSITIVEDATAORIGIN;\
+    (X).publicArea.authPolicy.size = 0;\
+    (X).publicArea.parameters.rsaDetail.symmetric.algorithm = TPM2_ALG_NULL;\
+    (X).publicArea.parameters.rsaDetail.scheme.scheme = TPM2_ALG_NULL;\
+    (X).publicArea.parameters.rsaDetail.keyBits = RSA_2K_MODULUS_SIZE_IN_BITS;\
+    (X).publicArea.parameters.rsaDetail.exponent = 0x0;\
+    (X).publicArea.unique.rsa.size = RSA_2K_MODULUS_SIZE_IN_BYTES;\
+
 static bool create_import_key_public_data_and_name(void) {
 
-    IMPORT_KEY_SYM_PUBLIC_AREA(ctx.import_key_public)
+    switch (ctx.key_type) {
+        case TPM2_ALG_AES:
+            IMPORT_KEY_SYM_PUBLIC_AREA(ctx.import_key_public);
+            memcpy(ctx.import_key_public.publicArea.unique.sym.buffer,
+                ctx.import_key_public_unique_data, TPM2_SHA256_DIGEST_SIZE);
+            free(ctx.import_key_public_unique_data);
+            break;
+        case TPM2_ALG_RSA:
+            IMPORT_KEY_RSA2K_PUBLIC_AREA(ctx.import_key_public);
+            memcpy(ctx.import_key_public.publicArea.unique.rsa.buffer,
+                ctx.input_pub_key_buffer, ctx.input_pub_key_buffer_length);
+            break;
+    }
 
     tpm2_errata_fixup(SPEC_116_ERRATA_2_7,
                       &ctx.import_key_public.publicArea.objectAttributes);
@@ -300,9 +357,6 @@ static bool create_import_key_public_data_and_name(void) {
     }
 
     tpm2_util_tpma_object_to_yaml(ctx.import_key_public.publicArea.objectAttributes);
-
-    memcpy(ctx.import_key_public.publicArea.unique.sym.buffer,
-            ctx.import_key_public_unique_data, TPM2_SHA256_DIGEST_SIZE);
 
     size_t public_area_marshalled_offset = 0;
     TPM2B_PUBLIC *marshalled_bytes = malloc(sizeof(ctx.import_key_public));
@@ -328,21 +382,33 @@ static bool create_import_key_public_data_and_name(void) {
     return true;
 }
 
-#define IMPORT_KEY_SYM_SENSITIVE_AREA(X) \
-    (X).sensitiveArea.sensitiveType = TPM2_ALG_SYMCIPHER; \
-    (X).sensitiveArea.authValue.size = 0; \
-    (X).sensitiveArea.seedValue.size = TPM2_SHA256_DIGEST_SIZE; \
-    (X).sensitiveArea.sensitive.sym.size = SYM_KEY_SIZE; \
-
 static void create_import_key_sensitive_data(void) {
 
-    IMPORT_KEY_SYM_SENSITIVE_AREA(ctx.import_key_sensitive);
+    ctx.import_key_sensitive.sensitiveArea.authValue.size = 0;
+    ctx.import_key_sensitive.sensitiveArea.seedValue.size =
+        TPM2_SHA256_DIGEST_SIZE;
 
     memcpy(ctx.import_key_sensitive.sensitiveArea.seedValue.buffer,
             ctx.protection_seed_data, TPM2_SHA256_DIGEST_SIZE); //max digest size
 
-    memcpy(ctx.import_key_sensitive.sensitiveArea.sensitive.sym.buffer,
-            ctx.input_key_buffer, SYM_KEY_SIZE);
+    switch (ctx.key_type) {
+        case TPM2_ALG_AES:
+            ctx.import_key_sensitive.sensitiveArea.sensitiveType =
+                TPM2_ALG_SYMCIPHER;
+            ctx.import_key_sensitive.sensitiveArea.sensitive.sym.size =
+                ctx.input_key_buffer_length;
+            memcpy(ctx.import_key_sensitive.sensitiveArea.sensitive.sym.buffer,
+                ctx.input_key_buffer, ctx.input_key_buffer_length);
+            break;
+        case TPM2_ALG_RSA:
+            ctx.import_key_sensitive.sensitiveArea.sensitiveType =
+                TPM2_ALG_RSA;
+            ctx.import_key_sensitive.sensitiveArea.sensitive.rsa.size =
+                ctx.input_key_buffer_length;
+            memcpy(ctx.import_key_sensitive.sensitiveArea.sensitive.rsa.buffer,
+                ctx.input_key_buffer, ctx.input_key_buffer_length);
+            break;
+    }
 }
 
 #define PARENT_NAME_ALG TPM2_ALG_SHA256
@@ -362,12 +428,12 @@ static bool calc_outer_integrity_hmac_key_and_dupsensitive_enc_key(void) {
     memcpy(ctx.protection_hmac_key, result_key.buffer, TPM2_SHA256_DIGEST_SIZE);
 
     rval = tpm_kdfa(PARENT_NAME_ALG, (TPM2B *)&to_TPM2B_seed, "STORAGE",
-            (TPM2B *)&ctx.import_key_public_name, &null_2b, SYM_KEY_SIZE * 8,
+            (TPM2B *)&ctx.import_key_public_name, &null_2b, TPM2_MAX_SYM_BLOCK_SIZE * 8,
             &result_key);
     if (rval != TPM2_RC_SUCCESS) {
         return false;
     }
-    memcpy(ctx.protection_enc_key, result_key.buffer, SYM_KEY_SIZE);
+    memcpy(ctx.protection_enc_key, result_key.buffer, TPM2_MAX_SYM_BLOCK_SIZE);
 
     return true;
 }
@@ -375,10 +441,10 @@ static bool calc_outer_integrity_hmac_key_and_dupsensitive_enc_key(void) {
 static void calculate_inner_integrity(void) {
 
     //Marshal sensitive area
-    uint8_t buffer_marshalled_sensitiveArea[max_buffer_size] = { 0 };
+    uint8_t buffer_marshalled_sensitiveArea[TPM2_MAX_DIGEST_BUFFER] = { 0 };
     size_t marshalled_sensitive_size = 0;
     Tss2_MU_TPMT_SENSITIVE_Marshal(&ctx.import_key_sensitive.sensitiveArea,
-            buffer_marshalled_sensitiveArea + sizeof(uint16_t), max_buffer_size,
+            buffer_marshalled_sensitiveArea + sizeof(uint16_t), TPM2_MAX_DIGEST_BUFFER,
             &marshalled_sensitive_size);
     size_t marshalled_sensitive_size_info = 0;
     Tss2_MU_UINT16_Marshal(marshalled_sensitive_size, buffer_marshalled_sensitiveArea,
@@ -451,7 +517,6 @@ static void create_import_key_private_data(void) {
 
 static bool import_external_key_and_save_public_private_data(TSS2_SYS_CONTEXT *sapi_context) {
 
-
     TSS2L_SYS_AUTH_COMMAND npsessionsData =
             TSS2L_SYS_AUTH_COMMAND_INIT(1, {TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW)});
 
@@ -495,9 +560,12 @@ static bool key_import(TSS2_SYS_CONTEXT *sapi_context) {
 
     create_random_seed_and_sensitive_enc_key();
 
-    bool res = calc_sensitive_unique_data();
-    if (!res) {
-        return false;
+    bool res = true;
+    if (ctx.key_type == TPM2_ALG_AES) {
+        res = calc_sensitive_unique_data();
+        if (!res) {
+            return false;
+        }
     }
 
     res = create_import_key_public_data_and_name();
@@ -515,29 +583,35 @@ static bool key_import(TSS2_SYS_CONTEXT *sapi_context) {
 
     create_import_key_private_data();
 
-    res = encrypt_seed_with_tpm2_rsa_public_key();
+    res = encrypt_seed_with_tpm2_rsa_public_key(sapi_context);
     if (!res) {
         LOG_ERR("Failed Seed Encryption\n");
         return false;
     }
-    res = import_external_key_and_save_public_private_data(sapi_context);
-    if (!res) {
-        return false;
-    }
 
-    return true;
+    return import_external_key_and_save_public_private_data(sapi_context);
 }
 
 static bool on_option(char key, char *value) {
 
     switch(key) {
+    case 'G':
+        ctx.key_type = tpm2_alg_util_from_optarg(value);
+        switch(ctx.key_type) {
+            case TPM2_ALG_AES:
+                ctx.input_key_buffer_length = TPM2_MAX_SYM_BLOCK_SIZE;
+                break;
+            case TPM2_ALG_RSA:
+                ctx.input_key_buffer_length = 128;
+                break;
+            default:
+                LOG_ERR("Invalid/ unsupported key algorithm for import, got\"%s\"",
+                    value);
+                return false;
+        }
+        return true;
     case 'k':
         ctx.input_key_file = value;
-        uint16_t input_key_buffer_length = SYM_KEY_SIZE;
-        if (!files_load_bytes_from_path(ctx.input_key_file,
-                ctx.input_key_buffer, &input_key_buffer_length)) {
-            return false;
-        }
         break;
     case 'H':
         if (!tpm2_util_string_to_uint32(value, &ctx.parent_key_handle)) {
@@ -545,7 +619,7 @@ static bool on_option(char key, char *value) {
             return false;
         }
         break;
-    case 'f':
+    case 'K':
         ctx.parent_key_public_file = value;
         break;
     case 'q':
@@ -571,35 +645,152 @@ static bool on_option(char key, char *value) {
 bool tpm2_tool_onstart(tpm2_options **opts) {
 
     const struct option topts[] = {
+      { "import-key-alg",     required_argument, NULL, 'G'},
       { "input-key-file",     required_argument, NULL, 'k'},
       { "parent-key-handle",  required_argument, NULL, 'H'},
-      { "parent-key-public",  required_argument, NULL, 'f'},
+      { "parent-key-public",  required_argument, NULL, 'K'},
       { "import-key-private", required_argument, NULL, 'r'},
       { "import-key-public",  required_argument, NULL, 'q'},
       { "object-attributes",  required_argument, NULL, 'A' },
     };
 
-    setbuf(stdout, NULL);
-    setvbuf (stdout, NULL, _IONBF, BUFSIZ);
-
-    *opts = tpm2_options_new("k:H:f:q:r:A:", ARRAY_LEN(topts), topts, on_option,
+    *opts = tpm2_options_new("G:k:H:K:q:r:A:", ARRAY_LEN(topts), topts, on_option,
                              NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
+}
+
+static bool load_rsa_key(void) {
+
+    bool res = false;
+    RSA *k = NULL;
+    const BIGNUM *p, *n;
+
+    FILE *fk = fopen(ctx.input_key_file, "r");
+    if (!fk) {
+        LOG_ERR("Could not open file \"%s\", error: %s",
+                ctx.input_key_file, strerror(errno));
+        return false;
+    }
+
+    k = PEM_read_RSAPrivateKey(fk, NULL,
+        NULL, NULL);
+    fclose(fk);
+    if (!k) {
+         ERR_print_errors_fp (stderr);
+         LOG_ERR("Reading PEM file \"%s\" failed", ctx.input_key_file);
+         return false;
+    }
+
+#if OPENSSL_VERSION_NUMBER < 0x1010000fL /* OpenSSL 1.1.0 */
+    p = k->p;
+    n = k->n;
+#else
+    RSA_get0_factors(k, &p, NULL);
+    RSA_get0_key(k, &n, NULL, NULL);
+#endif
+
+    int priv_bytes = BN_num_bytes(p);
+    if (priv_bytes > ctx.input_key_buffer_length) {
+        LOG_ERR("Expected prime \"p\" to be less than or equal to %u,"
+                " got: %d", ctx.input_key_buffer_length, priv_bytes);
+        goto out;
+    }
+
+    int success = BN_bn2bin(p, ctx.input_key_buffer);
+    if (!success) {
+        ERR_print_errors_fp (stderr);
+        LOG_ERR("Could not convert prime \"p\"");
+        goto out;
+    }
+
+    int pub_bytes = BN_num_bytes(n);
+    if (pub_bytes > RSA_2K_MODULUS_SIZE_IN_BYTES) {
+        LOG_ERR("Expected modulus \"n\" to be less than or equal to %u,"
+                " got: %d", RSA_2K_MODULUS_SIZE_IN_BYTES, pub_bytes);
+        goto out;
+    }
+
+    ctx.input_pub_key_buffer_length = pub_bytes;
+    ctx.input_pub_key_buffer = malloc(pub_bytes);
+    if (!ctx.input_pub_key_buffer) {
+        LOG_ERR("oom");
+        goto out;
+    }
+
+    success = BN_bn2bin(n, ctx.input_pub_key_buffer);
+    if (!success) {
+        ERR_print_errors_fp (stderr);
+        LOG_ERR("Could not convert modulus \"n\"");
+        goto out;
+    }
+
+    res = true;
+
+out:
+    RSA_free(k);
+
+    return res;
+}
+
+static void free_key(void) {
+    free(ctx.input_key_buffer);
+    free(ctx.input_pub_key_buffer);
+}
+
+static bool load_key(void) {
+
+    ctx.input_key_buffer = malloc(ctx.input_key_buffer_length);
+    if (!ctx.input_key_buffer) {
+        LOG_ERR("oom");
+        return false;
+    }
+
+    if (ctx.key_type == TPM2_ALG_RSA) {
+        return load_rsa_key();
+    }
+
+    bool res = files_load_bytes_from_path(ctx.input_key_file,
+        ctx.input_key_buffer, &ctx.input_key_buffer_length);
+    if (!res) {
+        LOG_ERR("Input key file load failed");
+        return false;
+    }
+
+    return true;
 }
 
 int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
 
     UNUSED(flags);
 
+    int rc = 1;
+
+    OpenSSL_add_all_algorithms();
+    OpenSSL_add_all_ciphers();
+    ERR_load_crypto_strings();
+
     if (!ctx.input_key_file || !ctx.parent_key_handle
-            || !ctx.parent_key_public_file || !ctx.import_key_public_file
-            || !ctx.import_key_private_file) {
-        LOG_ERR("tpm2_import tool missing arguments: %s\n %08X\n %s\n %s\n %s\n",
-             ctx.input_key_file, ctx.parent_key_handle, ctx.parent_key_public_file,
-             ctx.import_key_public_file,ctx.import_key_private_file );
+            || !ctx.import_key_public_file || !ctx.import_key_private_file
+            || !ctx.key_type) {
+        LOG_ERR("tpm2_import tool missing arguments: %s\n %08X\n %s\n %s",
+             ctx.input_key_file, ctx.parent_key_handle, ctx.import_key_public_file,
+             ctx.import_key_private_file);
         return 1;
     }
 
-    return !key_import(sapi_context);
+    bool result = load_key();
+    if (!result) {
+        goto out;
+    }
+
+    result = key_import(sapi_context);
+    if (!result) {
+        goto out;
+    }
+
+    rc = 0;
+out:
+    free_key();
+    return rc;
 }

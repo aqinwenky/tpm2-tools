@@ -42,17 +42,19 @@ will create and load a Primary Object. The sensitive area is not returned.
     "Authorization Formatting".
 
   * **-g**, **--halg**=_ALGORITHM_:
-    The hash algorithm to use. Algorithms should follow the
-    " formatting standards, see section "Algorithm Specifiers".
-    Also, see section "Supported Hash Algorithms" for a list of supported
-    hash algorithms.
+    The hash algorithm to use for generating the objects name.
+    If not specified, the default name algorithm is SHA256.
+    Algorithms should follow the "formatting standards, see section
+    "Algorithm Specifiers". Also, see section
+    "Supported Hash Algorithms" for a list of supported hash algorithms.
 
   * **-G**, **--kalg**=_KEY\_ALGORITHM_:
     Algorithm type for generated key. It supports friendly names like the -g option.
+    If not specified, the default key algorithm is RSA.
     See section "Supported Public Object Algorithms" for a list of supported
     object algorithms.
 
-  * **-C**, **--context**=_CONTEXT\_FILE_:
+  * **-o**, **--out-context**=_CONTEXT\_FILE_:
     An optional file used to store the object context returned.
 
   * **-L**, **--policy-file**=_POLICY\_FILE_:
@@ -85,7 +87,7 @@ will create and load a Primary Object. The sensitive area is not returned.
 # EXAMPLES
 
 ```
-tpm2_createprimary -H o -g sha256 -G ecc -C context.out
+tpm2_createprimary -H o -g sha256 -G ecc -o context.out
 ```
 
 # RETURNS

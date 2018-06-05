@@ -1,5 +1,6 @@
 //**********************************************************************;
 // Copyright (c) 2017, SUSE GmbH
+// Copyright (c) 2018, Intel Corporation
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -67,16 +68,6 @@ tpm2_convert_pubkey_fmt tpm2_convert_pubkey_fmt_from_optarg(const char *label);
 bool tpm2_convert_pubkey_save(TPM2B_PUBLIC *public, tpm2_convert_pubkey_fmt format, const char *path);
 
 /**
- * Loads a public key in the TSS format from a file.
- * @param public
- *  The public key to load
- * @param format
- * @param path
- * @return
- */
-bool tpm2_convert_pubkey_load(TPM2B_PUBLIC *public, const char *path);
-
-/**
  * Parses the given command line signature format option string and returns
  * the corresponding signature_format enum value.
  *
@@ -95,5 +86,23 @@ tpm2_convert_sig_fmt tpm2_convert_sig_fmt_from_optarg(const char *label);
  */
 bool tpm2_convert_sig(TPMT_SIGNATURE *signature, tpm2_convert_sig_fmt format,
         const char *path);
+
+/**
+ * Load a signature from path and convert the format
+ * @param path
+ *  The path to load the signature from.
+ * @param format
+ *  The tss signature format
+ * @param sig_alg
+ *  The algorithm used for the signature. Only RSASSA (RSA PKCS1.5) signatures accepted.
+ * @param halg
+ *  The hashing algorithm used.
+ * @param signature
+ *  The signature structure to output too.
+ * @return
+ *  true on success, false on error.
+ */
+bool tpm2_convert_sig_load(const char *path, tpm2_convert_sig_fmt format, TPMI_ALG_SIG_SCHEME sig_alg,
+        TPMI_ALG_HASH halg, TPMT_SIGNATURE *signature);
 
 #endif /* CONVERSION_H */

@@ -20,6 +20,7 @@ Output is written in a YAML format to stdout, with each algorithm followed by
 a PCR index and its value. As a simple example assume just sha1 and sha256
 support and only 1 PCR. The output would be:
 ```
+$ tpm2_pcrlist -L sha1:0+sha256:0
 sha1 :
   0  : 0000000000000000000000000000000000000003
 sha256 :
@@ -28,7 +29,7 @@ sha256 :
 
 # OPTIONS
 
-  * **-g**, **--algorithm**=_HASH\_ALGORITHM_:
+  * **-g**, **--halg**=_HASH\_ALGORITHM_:
     Only output PCR banks with the given algorithm.
     Algorithms should follow the "formatting standards, see section
     "Algorithm Specifiers".
@@ -42,7 +43,7 @@ sha256 :
 
     The list of pcr banks and selected PCRs' ids for each bank to display.
     _PCR\_SELECTION\_LIST_ values should follow the
-    pcr bank specifiers standards, see section "PCR Bank Specfiers".
+    pcr bank specifiers standards, see section "PCR Bank Specifiers".
 
   * **-s**, **--algs**:
     Output the list of supported algorithms.

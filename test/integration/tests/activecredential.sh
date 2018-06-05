@@ -38,8 +38,8 @@ cleanup() {
 
     # Evict persistent handles, we want them to always succeed and never trip
     # the onerror trap.
-    tpm2_evictcontrol -Q -a o -H 0x81010009 2>/dev/null || true
-    tpm2_evictcontrol -Q -a o -H 0x8101000a 2>/dev/null || true
+    tpm2_evictcontrol -Q -a o -c 0x81010009 2>/dev/null || true
+    tpm2_evictcontrol -Q -a o -c 0x8101000a 2>/dev/null || true
 
     if [ "$1" != "no-shut-down" ]; then
         shut_down
@@ -53,9 +53,9 @@ cleanup "no-shut-down"
 
 echo "12345678" > secret.data
 
-tpm2_createek -Q -H 0x81010009 -g rsa -p ek.pub
+tpm2_createek -Q -c 0x81010009 -g rsa -p ek.pub
 
-tpm2_createak -E 0x81010009 -k 0x8101000a -g rsa -D sha256 -s rsassa -p ak.pub -n ak.name > ak.out
+tpm2_createak -C 0x81010009 -k 0x8101000a -g rsa -D sha256 -s rsassa -p ak.pub -n ak.name > ak.out
 
 # Capture the yaml output and verify that its the same as the name output
 loaded_key_name_yaml=`python << pyscript
@@ -73,6 +73,6 @@ test "$loaded_key_name_yaml" == "$loaded_key_name"
 
 tpm2_makecredential -Q -e ek.pub  -s secret.data -n $loaded_key_name -o mkcred.out
 
-tpm2_activatecredential -Q -H 0x8101000a -k 0x81010009 -f mkcred.out -o actcred.out
+tpm2_activatecredential -Q -c 0x8101000a -C 0x81010009 -f mkcred.out -o actcred.out
 
 exit 0

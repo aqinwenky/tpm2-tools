@@ -24,17 +24,13 @@ An object that only has its public area loaded cannot be certified.
 
 These options control the certification:
 
-  * **-H**, **--obj-handle**=_OBJECT\_HANDLE_:
-    The handle of the object to be certified.
+  * **-c**, **--obj-context**=_CONTEXT\_OBJECT_:
+    Context object for the object to be certified. Either a file or a handle number.
+    See section "Context Object Format".
 
-  * **-C**, **--obj-context**=_FILE_:
-    Use _FILE_ for providing the object context.
-
-  * **-k**, **--key-handle**=_KEY\_HANDLE_:
-    Handle of the key used to sign the attestation  structure.
-
-  * **-c**, **--key-context**=_KEY\_CONTEXT_:
-    Filename of the key context used to sign the  attestation structure.
+  * **-C**, **--key-context**=_KEY\_CONTEXT_:
+    Context object for the key used to sign the attestation structure.
+    See section "Context Object Format".
 
   * **-P**, **--auth-object**=_OBJECT\_AUTH_:
     Use _OBJECT\_AUTH_ for providing an authorization value for the object specified
@@ -61,6 +57,8 @@ These options control the certification:
 [common options](common/options.md)
 
 [common tcti options](common/tcti.md)
+
+[context object format](commmon/ctxobj.md)
 
 [authorization formatting](common/password.md)
 

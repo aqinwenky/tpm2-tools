@@ -59,88 +59,17 @@ struct tpm_createprimary_ctx {
     tpm2_hierarchy_pdata objdata;
     char *context_file;
     struct {
-        UINT8 g :1;
-        UINT8 G :1;
+        UINT8 P :1;
+        UINT8 K :1;
     } flags;
+    char *parent_auth_str;
+    char *key_auth_str;
 };
 
 static tpm_createprimary_ctx ctx = {
     .auth = { .session_data = TPMS_AUTH_COMMAND_INIT(TPM2_RS_PW) },
     .objdata = TPM2_HIERARCHY_DATA_INIT
 };
-
-
-static bool set_name_alg(TPMI_ALG_HASH halg, TPM2B_PUBLIC *public) {
-
-    switch(halg) {
-    case TPM2_ALG_SHA1:
-    case TPM2_ALG_SHA256:
-    case TPM2_ALG_SHA384:
-    case TPM2_ALG_SHA512:
-    case TPM2_ALG_SM3_256:
-    case TPM2_ALG_NULL:
-        public->publicArea.nameAlg = halg;
-        return true;
-    }
-
-    LOG_ERR("name algorithm \"%s\" not supported!",
-            tpm2_alg_util_algtostr(halg));
-
-    return false;
-}
-
-static bool set_alg(TPMI_ALG_PUBLIC type, TPM2B_PUBLIC *public) {
-
-
-    switch(type) {
-    case TPM2_ALG_RSA: {
-        TPMS_RSA_PARMS *r = &public->publicArea.parameters.rsaDetail;
-       r->symmetric.algorithm = TPM2_ALG_AES;
-       r->symmetric.keyBits.aes = 128;
-       r->symmetric.mode.aes = TPM2_ALG_CFB;
-       r->scheme.scheme = TPM2_ALG_NULL;
-       r->keyBits = 2048;
-       r->exponent = 0;
-       public->publicArea.unique.rsa.size = 0;
-    } break;
-    case TPM2_ALG_KEYEDHASH: {
-        TPMT_KEYEDHASH_SCHEME *s = &public->publicArea.parameters.keyedHashDetail.scheme;
-       s->scheme = TPM2_ALG_XOR;
-       s->details.exclusiveOr.hashAlg = TPM2_ALG_SHA256;
-       s->details.exclusiveOr.kdf = TPM2_ALG_KDF1_SP800_108;
-       public->publicArea.unique.keyedHash.size = 0;
-    } break;
-    case TPM2_ALG_ECC: {
-        TPMS_ECC_PARMS *e = &public->publicArea.parameters.eccDetail;
-       e->symmetric.algorithm = TPM2_ALG_AES;
-       e->symmetric.keyBits.aes = 128;
-       e->symmetric.mode.sym = TPM2_ALG_CFB;
-       e->scheme.scheme = TPM2_ALG_NULL;
-       e->curveID = TPM2_ECC_NIST_P256;
-       e->kdf.scheme = TPM2_ALG_NULL;
-       public->publicArea.unique.ecc.x.size = 0;
-       public->publicArea.unique.ecc.y.size = 0;
-    } break;
-    case TPM2_ALG_SYMCIPHER: {
-        TPMS_SYMCIPHER_PARMS *s = &public->publicArea.parameters.symDetail;
-       s->sym.algorithm = TPM2_ALG_AES;
-       s->sym.keyBits.sym = 128;
-       s->sym.mode.sym = TPM2_ALG_CFB;
-       public->publicArea.unique.sym.size = 0;
-    } break;
-    default:
-        LOG_ERR("type algorithm \"%s\" not supported!",
-                tpm2_alg_util_algtostr(public->publicArea.type));
-
-        return false;
-    }
-
-    public->publicArea.type = type;
-
-    return true;
-}
-
-
 
 static bool on_option(char key, char *value) {
 
@@ -155,20 +84,12 @@ static bool on_option(char key, char *value) {
         }
         break;
     case 'P':
-        res = tpm2_auth_util_from_optarg(value, &ctx.auth.session_data, &ctx.auth.session);
-        if (!res) {
-            LOG_ERR("Invalid parent key authorization, got\"%s\"", value);
-            return false;
-        }
+        ctx.flags.P = 1;
+        ctx.parent_auth_str = value;
         break;
     case 'K': {
-        TPMS_AUTH_COMMAND tmp;
-        res = tpm2_auth_util_from_optarg(value, &tmp, NULL);
-        if (!res) {
-            LOG_ERR("Invalid new key authorization, got\"%s\"", value);
-            return false;
-        }
-        ctx.objdata.in.sensitive.sensitive.userAuth = tmp.hmac;
+        ctx.flags.K = 1;
+        ctx.key_auth_str = value;
     } break;
     case 'g': {
         TPMI_ALG_HASH halg = tpm2_alg_util_from_optarg(value);
@@ -177,11 +98,10 @@ static bool on_option(char key, char *value) {
             return false;
         }
 
-        res = set_name_alg(halg, &ctx.objdata.in.public);
+        res = tpm2_alg_util_set_name(halg, &ctx.objdata.in.public);
         if (!res) {
             return false;
         }
-        ctx.flags.g = 1;
     }   break;
     case 'G': {
         TPMI_ALG_PUBLIC type = tpm2_alg_util_from_optarg(value);
@@ -190,13 +110,12 @@ static bool on_option(char key, char *value) {
             return false;
         }
 
-        res = set_alg(type, &ctx.objdata.in.public);
+        res = tpm2_alg_util_set_parent_pub_params(type, &ctx.objdata.in.public);
         if (!res) {
             return false;
         }
-        ctx.flags.G = 1;
     }   break;
-    case 'C':
+    case 'o':
         ctx.context_file = value;
         if (ctx.context_file == NULL || ctx.context_file[0] == '\0') {
             return false;
@@ -231,31 +150,42 @@ bool tpm2_tool_onstart(tpm2_options **opts) {
         { "auth-object",          required_argument, NULL, 'K' },
         { "halg",                 required_argument, NULL, 'g' },
         { "kalg",                 required_argument, NULL, 'G' },
-        { "context",              required_argument, NULL, 'C' },
+        { "out-context",          required_argument, NULL, 'o' },
         { "policy-file",          required_argument, NULL, 'L' },
         { "object-attributes",    required_argument, NULL, 'A' },
     };
 
-    *opts = tpm2_options_new("A:P:K:g:G:C:L:a:", ARRAY_LEN(topts), topts,
+    *opts = tpm2_options_new("A:P:K:g:G:o:L:a:", ARRAY_LEN(topts), topts,
             on_option, NULL, TPM2_OPTIONS_SHOW_USAGE);
 
     return *opts != NULL;
 }
 
-static inline bool valid_ctx(void) {
-    return (ctx.flags.g && ctx.flags.G);
-}
-
 int tpm2_tool_onrun(TSS2_SYS_CONTEXT *sapi_context, tpm2_option_flags flags) {
     UNUSED(flags);
 
+    bool result;
     int rc = 1;
 
-    if (!valid_ctx()) {
-        goto out;
+    if (ctx.flags.P) {
+        result = tpm2_auth_util_from_optarg(sapi_context, ctx.parent_auth_str, &ctx.auth.session_data, &ctx.auth.session);
+        if (!result) {
+            LOG_ERR("Invalid parent key authorization, got\"%s\"", ctx.parent_auth_str);
+            goto out;
+        }
     }
 
-    bool result = tpm2_hierarchy_create_primary(sapi_context, &ctx.auth.session_data, &ctx.objdata);
+    if (ctx.flags.K) {
+        TPMS_AUTH_COMMAND tmp;
+        result = tpm2_auth_util_from_optarg(sapi_context, ctx.key_auth_str, &tmp, NULL);
+        if (!result) {
+            LOG_ERR("Invalid new key authorization, got\"%s\"", ctx.key_auth_str);
+            goto out;
+        }
+        ctx.objdata.in.sensitive.sensitive.userAuth = tmp.hmac;
+    }
+
+    result = tpm2_hierarchy_create_primary(sapi_context, &ctx.auth.session_data, &ctx.objdata);
     if (!result) {
         goto out;
     }
